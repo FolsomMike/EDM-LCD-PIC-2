@@ -1,0 +1,64 @@
+MPLINK 4.41, Linker
+Linker Map File - Created Wed Feb 29 22:02:14 2012
+
+                                 Section Info
+                  Section       Type    Address   Location Size(Bytes)
+                ---------  ---------  ---------  ---------  ---------
+                   .org_0       code   0x000000    program   0x000000
+                   .org_1       code   0x000000    program   0x0001b4
+.config_2007_OPT EDM LCD PIC.O       code   0x002007    program   0x000002
+
+
+
+                              Program Memory Usage 
+                               Start         End      
+                           ---------   ---------      
+                            0x000000    0x0000d9      
+                            0x002007    0x002007      
+            219 out of 4358 program addresses used, program memory utilization is 5%
+
+
+
+                              Symbols - Sorted by Name
+                     Name    Address   Location    Storage File                     
+                ---------  ---------  ---------  --------- ---------                
+                     L10b   0x0000c4    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                     L11b   0x0000c9    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                     L12b   0x0000d0    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                     L13b   0x0000cd    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      L2b   0x0000a1    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      L3b   0x000099    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      L4b   0x0000ba    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      L5b   0x00006e    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      L8b   0x0000ac    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      L9b   0x0000b2    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                    Start   0x000000    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                 bigDelay   0x0000af    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                  initLCD   0x00007f    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+               smallDelay   0x0000aa    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                  strobeE   0x0000b5    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      zzz   0x00007f    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+
+
+
+                              Symbols - Sorted by Address
+                     Name    Address   Location    Storage File                     
+                ---------  ---------  ---------  --------- ---------                
+                    Start   0x000000    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      L5b   0x00006e    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                  initLCD   0x00007f    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      zzz   0x00007f    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      L3b   0x000099    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      L2b   0x0000a1    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+               smallDelay   0x0000aa    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      L8b   0x0000ac    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                 bigDelay   0x0000af    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      L9b   0x0000b2    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                  strobeE   0x0000b5    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                      L4b   0x0000ba    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                     L10b   0x0000c4    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                     L11b   0x0000c9    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                     L13b   0x0000cd    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+                     L12b   0x0000d0    program     static C:\Users\Mike\Documents\6 - Controlled Documents\PIC Projects Git Repositories\OPT EDM LCD PIC\OPT EDM LCD PIC.asm
+
+
