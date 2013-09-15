@@ -75,7 +75,9 @@
 
 ; Specify Device Configuration Bits
 
-  __CONFIG _INTOSC_OSC_CLKOUT & _WDT_OFF & _PWRTE_ON & _MCLRE_OFF & _BOREN_ON & _LVP_OFF & _CPD_OFF & _CP_OFF
+  __CONFIG _INTOSC_OSC_CLKOUT & _WDT_OFF & _PWRTE_ON & _MCLRE_OFF & _LVP_OFF & _CPD_OFF & _CP_OFF
+
+  ; __CONFIG _INTOSC_OSC_CLKOUT & _WDT_OFF & _PWRTE_ON & _MCLRE_OFF & _BOREN_ON & _LVP_OFF & _CPD_OFF & _CP_OFF
 
 ;_INTOSC_OSC_CLKOUT = uses internal oscillator, clock is output on RA6
 ;_WDT_OFF = watch dog timer is off
@@ -373,7 +375,7 @@ displayGreeting:
 	movwf	lcdData                             
     call    writeLCDData
 
-	movlw	'2'                             
+	movlw	'3'                             
 	movwf	lcdData                             
     call    writeLCDData
 
@@ -381,7 +383,7 @@ displayGreeting:
 	movwf	lcdData                             
     call    writeLCDData
 
-	movlw	'7'                             
+	movlw	'0'                             
 	movwf	lcdData                             
     call    writeLCDData
 
