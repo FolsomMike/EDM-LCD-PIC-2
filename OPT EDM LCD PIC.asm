@@ -75,9 +75,7 @@
 
 ; Specify Device Configuration Bits
 
-  __CONFIG _INTOSC_OSC_CLKOUT & _WDT_OFF & _PWRTE_ON & _MCLRE_OFF & _LVP_OFF & _CPD_OFF & _CP_OFF
-
-  ; __CONFIG _INTOSC_OSC_CLKOUT & _WDT_OFF & _PWRTE_ON & _MCLRE_OFF & _BOREN_ON & _LVP_OFF & _CPD_OFF & _CP_OFF
+	__CONFIG _INTOSC_OSC_CLKOUT & _WDT_OFF & _PWRTE_ON & _MCLRE_OFF & _BOREN_OFF & _LVP_OFF & _CPD_OFF & _CP_OFF
 
 ;_INTOSC_OSC_CLKOUT = uses internal oscillator, clock is output on RA6
 ;_WDT_OFF = watch dog timer is off
@@ -343,15 +341,15 @@ displayGreeting:
 	movwf	lcdData                             
     call    writeLCDData
 
-	movlw	'C'                             
-	movwf	lcdData                             
-    call    writeLCDData
-
 	movlw	'M'                             
 	movwf	lcdData                             
     call    writeLCDData
 
-	movlw	'P'
+	movlw	'K'                             
+	movwf	lcdData                             
+    call    writeLCDData
+
+	movlw	'S'
 	movwf	lcdData                             
     call    writeLCDData
 
@@ -383,7 +381,7 @@ displayGreeting:
 	movwf	lcdData                             
     call    writeLCDData
 
-	movlw	'0'                             
+	movlw	'1'       
 	movwf	lcdData                             
     call    writeLCDData
 
@@ -427,11 +425,12 @@ initLCD:
 								;  bit 2: 0 = 5x7 dot font, 1 = 5 x 10 dot font
 	call    smallDelay			; wait for a bit because BF (busy flag) cannot be checked on this board
 
-	movlw	0x08				; write 0000 1000 ~ Display Off
+	movlw	0x0c				; write 0000 1000 ~ Display Off
 	movwf	LCD_DATA			;  bit 3: specifies display on/off command
     call    strobeE				;  bit 2: 0 = display off, 1 = display on
 	call    smallDelay			; wait for a bit because BF (busy flag) cannot be checked on this board
-								; NOTE: display off added by MKS to match suggested setup in LCD user manual
+								; NOTE: LCD user manual instructs to turn off display here with 0x08
+								;  but this did NOT work. Unknown why.
 
 	movlw	0x01				; write 0000 0001 ~ Clear Display
 	movwf	LCD_DATA
@@ -444,7 +443,10 @@ initLCD:
     call    strobeE				; bit 1: 0 = no increment, 1 = increment mode; bit 0: 0 = no shift, 1 = shift display
 	call    smallDelay			; wait for a bit because BF (busy flag) cannot be checked on this board
 								; NOTE: Entry Mode Set was being done after display on -- moved by MKS to match
-								;		suggested setup in LCD user manual
+								;		suggested setup in LCD user manual.
+								; NOTE2: See above regarding not working when display turned off before this --
+								; does display need to be on when this command given regardless of LCD manual
+								; suggestions?
 
 	movlw	0x0c				; write 0000 1100 ~ Display On, cursor off, blink off
 	movwf	LCD_DATA			;  bit 3: specifies display on/off command
