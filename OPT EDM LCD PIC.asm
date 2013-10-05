@@ -26,7 +26,7 @@
 ;
 ; 1.0   Some code and concepts used from source code disassembled from hex object code version 2.7 
 ;       from original author.
-; 1.1	Major change to methodolgy. The data from the master PIC is now written to a local buffer
+; 2.0	Major change to methodolgy. The data from the master PIC is now written to a local buffer
 ;		which is then continuously and repeatedly transmitted to the LCD display. All control codes
 ; 		received from the master except address change codes are transmitted straight to the display.
 ;		The constant refreshing of the display serves to correct errors caused by noise from the
@@ -68,6 +68,59 @@
 ; for 20 character wide displays at the bottom of page 20.
 ;
 ;--------------------------------------------------------------------------------------------------
+; Serial Data from Main PIC
+;
+; The Main PIC sends data to this PIC via PortA,0 (RA0). A word is sent for each command/data
+; value:
+;
+; Data Format
+;
+; the first byte is a control byte and specifies either an LCD command or an LCD character
+; 	0 = data; 1 = command; other may be a command for a different PIC listening on the same line
+;
+; the second byte is either an LCD command or an LCD character
+;
+;
+; each serial bit from the Main PIC is 72 uS wide 
+;
+; a single instruction cycle (a nop) on this LCD PIC is 1uS wide
+; a goto instruction is 3uS
+; a simple decfsz loop can be used for bit to bit timing
+;
+; Loop Code Timing
+;
+;	loop1: 	decfsz	counter,F
+;    		goto    loop1
+;
+; if you are using a bsf/bcf pair to create a pulse train for verifying this
+; 	measurement, the one cycle of the bcf will be included in the wait time and must be
+;	accounted for by subtracting 1 cycle from the resulting delay times; for the board used
+;	for this test, one cycle = 1 us
+;
+; delay for different starting values of counter:
+;
+;  2 -> 5 uS
+;  3 -> 8 uS (each additional count -> 3 uS)
+; 24.3 -> 72 uS  ~ ((72 - 5) / 3) + 2
+; 
+; in actual use: 24 -> 73.6 uS and 23 -> 70.4 uS; value of 24 is closest
+;
+; for reasonably accurate detection of a start bit, checking the input every 1/3 bit width (24 uS)
+; is necessary -- worst case should be detecting the start bit 2/3 after the down transition
+; this should be close enough to successfully detect the remaining 8 bits, allowing for 24 uS
+; of timing slop
+; 
+; Version 1.0 of the LCD PIC code read the word all at one time and then transmitted to the display
+; between words. The time between words is significantly larger allowing for the time for the
+; display update. For version 2.0, which constantly refreshes the display from a local buffer,
+; the time required for display access code is more than that allowed between incoming serial words.
+; Thus, an interrupt is used to monitor for start bits.
+;
+; The interrupt must occur every 24 uS, which allow 24 instruction cycles of the main code between
+; interrupts. The display updating is not particularly time sensitive, so the high interrupt rate
+; shouldn't be a problem.
+;
+;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
 ; Configurations, etc. for the Assembler Tools and the PIC
@@ -106,11 +159,11 @@
 ; Hardware Definitions
 
 LCD_CTRL        EQU     0x05		; PORTA
-SERIAL_IN		EQU		0x00		; RA0
+SERIAL_IN		EQU		0x00		; RA0 - serial data from Main PIC
 LCD_E           EQU     0x01		; RA1 - data read/write strobe
 LCD_RS			EQU		0x02		; RA2 - instruction/data register select
-UNUSED1			EQU		0x03
-UNUSED2			EQU		0X04
+UNUSED1			EQU		0x03		; RA3 - no used in application -- useful for debugging output
+UNUSED2			EQU		0X04		; RA4 - no used in application -- useful for debugging output
 
 LCD_DATA        EQU     0x06		; PORTB
 
@@ -434,8 +487,8 @@ start:
     						;	RA0 - Input : receives serial input data
 							;	RA1 - Output: E strobe to initiate LCD R/W
 							;	RA2 - Output: Register Select for LCD
-							;	RA3 - Output: unused (tied high for some reason)
-							;	RA4 - Output: unused (tied high for some reason)
+							;	RA3 - Output: unused (pulled high for some reason)
+							;	RA4 - Output: unused (pulled high for some reason)
 							;	RA5 - Vpp for PIC programming, unused otherwise
 							;	RA6 - unused (unconnected)
 							;	RA7 - unused (unconnected)
@@ -473,6 +526,9 @@ start:
 
 	bcf 	STATUS,RP0		; select bank 0
 
+	movlw	0xff			; 0xff in control byte means no new serial data
+	movwf	controlByte		; it is changed when a new value is received
+
 	movlw	.30				; save 255 values
 	movwf	debugCounter
 
@@ -489,6 +545,39 @@ start:
 mainLoop:
 
 	bcf		STATUS,RP0			; select bank 0
+
+
+;debug mks
+
+dbml1:
+
+	movlw	0x2
+	movwf	scratch0
+
+	bsf		LCD_CTRL,UNUSED1
+                             
+dbml2:
+	decfsz	scratch0,F                         
+    goto    dbml2
+
+	bcf		LCD_CTRL,UNUSED1
+
+	movlw	.24
+	movwf	scratch0
+
+	bsf		LCD_CTRL,UNUSED1
+                             
+dbml3:
+	decfsz	scratch0,F                         
+    goto    dbml3
+
+	bcf		LCD_CTRL,UNUSED1
+
+	goto dbml1
+
+
+;debug mks
+
 
 ;debug mks	btfss	PORTA,SERIAL_IN		; skip if serial is not low to signal start bit of incoming data
 	call	receiveAndHandleSerialWord
@@ -1124,7 +1213,7 @@ displayGreeting:
     call    writeToLCDBuffer
  	bcf 	STATUS,RP0		; select bank 0
 
-	movlw	'3'                             
+	movlw	'2'                             
 	movwf	lcdData                             
     call    writeToLCDBuffer
  	bcf 	STATUS,RP0		; select bank 0
@@ -1134,7 +1223,7 @@ displayGreeting:
     call    writeToLCDBuffer
  	bcf 	STATUS,RP0		; select bank 0
 
-	movlw	'1'       
+	movlw	'0'       
 	movwf	lcdData                             
     call    writeToLCDBuffer
  	bcf 	STATUS,RP0		; select bank 0
@@ -1552,6 +1641,75 @@ timer0Interrupt:            ; Routine when the Timer1 overflows
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
+; debug
+;
+; Stores several bytes (number specified by debugCounter) in eeprom for later viewing.
+;
+; Specified number of bytes in debugCounter are first stored in memory then copied to eeprom
+; all at once. This eliminates the lengthy time delay for writing to eeprom being inserted into
+; program flow -- the delays all happen at the end of the capture when the block is written to
+; eeprom.
+;
+                                 
+debug:
+
+	bcf		STATUS,RP0				; select bank 0
+
+	movf	debugCounter,W			; if counter is zero, do not store any more
+ 	sublw	0
+ 	btfsc	STATUS,Z
+	goto	storeDebugDataInEEprom
+
+	decf	debugCounter,F
+
+    movf    debugPointer,W
+    movwf   FSR           
+
+	movf	controlByte,W
+	movwf	INDF
+	incf	FSR,F
+
+	movf	lcdData,W
+	movwf	INDF
+	incf	FSR,F
+
+	movf	FSR,W
+	movwf	debugPointer
+
+	return
+
+storeDebugDataInEEprom:
+
+	movf	debugPointer,W			; if pointer has been set to zero, already stored to eeprom so skip
+ 	sublw	0
+ 	btfsc	STATUS,Z
+	return
+
+	movlw	.0
+	movwf	debugPointer
+
+;eepromAddress set to zero by setup code -- will get incremented by each
+;call to writeToEEprom
+
+	movlw	eeScratch0		; beginning of storage buffer in eeprom
+	movwf	eepromAddress
+
+    movlw   db0        		; address in RAM
+    movwf   FSR
+
+    movlw   .30
+    movwf   eepromCount     ; write 1 byte
+
+    call    writeToEEprom
+
+debugFreeze:
+
+	goto	debugFreeze
+
+; end of debug
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
 ; setUpSerialReceiver
 ;
 ; Sets up all registers and values used by the serial receive function(s).
@@ -1645,68 +1803,5 @@ L15b:
 
 ; end of receiveSerialByte
 ;--------------------------------------------------------------------------------------------------
-
-;--------------------------------------------------------------------------------------------------
-; debug
-;
-                                 
-debug:
-
-	bcf		STATUS,RP0				; select bank 0
-
-	movf	debugCounter,W			; if counter is zero, do not store any more
- 	sublw	0
- 	btfsc	STATUS,Z
-	goto	storeDebugDataInEEprom
-
-	decf	debugCounter,F
-
-    movf    debugPointer,W
-    movwf   FSR           
-
-	movf	controlByte,W
-	movwf	INDF
-	incf	FSR,F
-
-	movf	lcdData,W
-	movwf	INDF
-	incf	FSR,F
-
-	movf	FSR,W
-	movwf	debugPointer
-
-	return
-
-storeDebugDataInEEprom:
-
-	movf	debugPointer,W			; if pointer has been set to zero, already stored to eeprom so skip
- 	sublw	0
- 	btfsc	STATUS,Z
-	return
-
-	movlw	.0
-	movwf	debugPointer
-
-;eepromAddress set to zero by setup code -- will get incremented by each
-;call to writeToEEprom
-
-	movlw	eeScratch0		; beginning of storage buffer in eeprom
-	movwf	eepromAddress
-
-    movlw   db0        		; address in RAM
-    movwf   FSR
-
-    movlw   .30
-    movwf   eepromCount     ; write 1 byte
-
-    call    writeToEEprom
-
-debugFreeze:
-
-	goto	debugFreeze
-
-; end of debug
-;--------------------------------------------------------------------------------------------------
-
  
     END
