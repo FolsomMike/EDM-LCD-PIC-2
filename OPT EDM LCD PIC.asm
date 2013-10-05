@@ -191,7 +191,49 @@ BLINK_ON_FLAG			EQU		0x01
 	smallDelayCnt			; used to count down for small delay
 	bigDelayCnt				; used to count down for big delay
 	bitCount				; used to count number of bits received
+	
 	scratch0				; scratch pad variable
+	scratch1				; scratch pad variable
+	scratch2				; scratch pad variable
+
+    eepromAddress		    ; use to specify address to read or write from EEprom
+    eepromCount	        	; use to specify number of bytes to read or write from EEprom
+
+	debugCounter			; counts number of bytes saved to debug buffer
+	debugPointer			; points to next address in debug buffer
+
+	db0
+	db1
+	db2
+	db3
+	db4
+	db5
+	db6
+	db7
+	db8
+	db9
+	db10
+	db11
+	db12
+	db13
+	db14
+	db15
+	db16
+	db17
+	db18
+	db20
+	db21
+	db22
+	db23
+	db24
+	db25
+	db26
+	db27
+	db28
+	db29
+
+
+
 
  endc
 
@@ -330,13 +372,46 @@ BLINK_ON_FLAG			EQU		0x01
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
+; Variables in EEprom
+;
+; Assign variables in EEprom
+;
+
+ cblock 	0x0      	; Variables start in RAM at 0x0
+	
+	eeScratch0
+    eeScratch1
+	eeScratch2
+
+ endc
+
+; end of Variables in EEprom
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
 ; Power On and Reset Vectors
 ;
 
-	org	0x00				; Start of Program Memory
+	org 0x00                ; Start of Program Memory
 
-; none of the other vectors are used, so the program just starts executing at the reset vector
-; location
+	goto start              ; jump to main code section
+	nop			            ; Pad out so interrupt
+	nop			            ; service routine gets
+	nop			            ; put at address 0x0004.
+
+
+; interrupt vector at 0x0004
+; NOTE: You must save values (PUSH_MACRO) and clear PCLATH before jumping to the interrupt
+; routine - if PCLATH has bits set it will cause a jump into an unexpected program memory
+; bank.
+
+	PUSH_MACRO              ; MACRO that saves required context registers
+	clrf	STATUS          ; set to known state
+    clrf    PCLATH          ; set to bank 0 where the ISR is located
+    goto interruptHandler	; points to interrupt service routine
+
+; end of Reset Vectors
+;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
 ; Main Code
@@ -345,7 +420,7 @@ BLINK_ON_FLAG			EQU		0x01
 ; the main PIC for data and instructions to be passed on to the LCD display.
 ;
 
-Start:
+start:
 
     clrf    INTCON          ; disable all interrupts
 
@@ -386,6 +461,8 @@ Start:
 
 	bcf 	STATUS,RP0		; select bank 0
 
+	call	setUpSerialReceiver
+
 	call	setUpLCDCharacterBuffer
 
 	call	clearLCDLocalBuffer
@@ -395,6 +472,13 @@ Start:
 	call	displayGreeting
 
 	bcf 	STATUS,RP0		; select bank 0
+
+	movlw	.30				; save 255 values
+	movwf	debugCounter
+
+	movlw	db0
+	movwf	debugPointer
+
 
 ; begin monitoring the serial data input line from the main PIC for data and instructions
 ; to be passed on to the LCD display
@@ -406,12 +490,12 @@ mainLoop:
 
 	bcf		STATUS,RP0			; select bank 0
 
- 	btfss	PORTA,SERIAL_IN		; skip if serial is not low to signal start bit of incoming data
+;debug mks	btfss	PORTA,SERIAL_IN		; skip if serial is not low to signal start bit of incoming data
 	call	receiveAndHandleSerialWord
 
-	bcf		STATUS,RP0		; select bank 0
+	bcf		STATUS,RP0			; select bank 0
 
-	call	writeNextCharInBufferToLCD ;write one character in the buffer to the LCD
+;debug mks	call	writeNextCharInBufferToLCD ;write one character in the buffer to the LCD
 
     goto    mainLoop
 
@@ -444,6 +528,9 @@ receiveAndHandleSerialWord:
 	movf	newSerialByte,W			; store the second byte (could be instruction or data for the LCD)
 	movwf	lcdData                             
 	
+	goto	debug	;debug mks
+
+
 	movf	controlByte,W			; if the control byte is 0, then the second byte is data for the LCD
  	sublw	0
  	btfsc	STATUS,Z
@@ -505,7 +592,7 @@ notAddressChangeCmd:
 
 	; transmit all other control codes straight to the display
 
-    call    writeLCDInstruction
+;debug mks    call    writeLCDInstruction
 
 	return
 
@@ -1144,12 +1231,34 @@ writeLCDData:
 
 	bcf		LCD_CTRL,LCD_E			; init E to low
 	bsf		LCD_CTRL,LCD_RS			; select data register in LCD
-    call    smallDelay
+
+;debug mks
+;    call    smallDelay
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+
 
 	movf	lcdData,W				; place data on output port
 	movwf	LCD_DATA                          
     call    strobeE					; write the data
-    call    smallDelay
+
+;debug mks
+;    call    smallDelay
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+
 
 	return
 
@@ -1169,13 +1278,35 @@ writeLCDInstruction:
 
 	bcf 	LCD_CTRL,LCD_E			; init E to low  
 	bcf 	LCD_CTRL,LCD_RS			; select instruction register in LCD
-    call    smallDelay
+
+;debug mks
+;    call    smallDelay
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+
 
 	movf 	lcdData,W				; place instruction on output port
 	movwf	LCD_DATA                         
     call    strobeE					; write the instruction
 	bsf		LCD_CTRL,LCD_RS			; set the instruction/data register select back to data register
-    call    smallDelay
+
+;debug mks
+;    call    smallDelay
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+
 
 	return
 
@@ -1230,27 +1361,210 @@ strobeE:
 
 	bsf		LCD_CTRL,LCD_E
 	nop                                    
+	nop
+	nop
+	nop
+	nop
 	bcf		LCD_CTRL,LCD_E
-    call    smallDelay
+
+;debug mks    
+;    call    smallDelay
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+
+
 	return
 
 ; end of strobeE
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; receiveSerialByte
+; readFromEEprom
+; 
+; Read block of bytes from EEprom.
 ;
-; Waits for incoming data to appear on the serial input line and then converts it into a byte.
+; Address in EEprom from which to read first byte should be in eepromAddress.
+; Number of bytes to read should be in eepromCount.
+; Indirect register (FSR) should point to first byte in RAM to be written into.
+; The block of bytes will be copied from EEprom to RAM.
 ;
-                                 
-receiveSerialByte:
+; NOTE: This function must be modified for use with PIC16F876 - look for
+;  notes in the function referring to PIC16F876 for details
+; 
+
+readFromEEprom:
+
+loopRFE1:
+
+	movf	eepromAddress,W	; load EEprom address from which to read
+	incf	eepromAddress,F	; move to next address in EEprom	
+	    
+    bsf	    STATUS,RP0		; select bank 1 [for PIC16F648]
+    ;bsf    STATUS,RP1		; select bank 2 [for PIC16F876]
+	
+    movwf	EEADR			; place in EEprom read address register
+
+	;bsf    STATUS,RP0		; select bank 3 [for PIC16F876]
+	;bcf    EECON1,EEPGD	; read from EEprom (as opposed to Flash) [for PIC16F876]
+	bsf	    EECON1,RD		; perform EEProm read
+
+	;bcf	STATUS,RP0	    ; select bank 2 [for PIC16F876]
+	movf	EEDATA,W		; move data read into w
+	movwf   INDF			; write to RAM
+	incf	FSR,F			; move to next address in RAM
+
+	bcf	STATUS,RP0		    ; select bank 0
+	bcf	STATUS,RP1
+
+	decfsz	eepromCount,F	; count down number of bytes transferred
+	goto	loopRFE1		; not zero yet - read more bytes
+
+	return
+
+; end of readFromEEprom
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; writeToEeprom
+;
+; Writes block of bytes to EEprom.
+;
+; Address in EEprom to store first byte should be in eepromAddress.
+; Number of bytes to write should be in eepromCount.
+; Indirect register (FSR) should point to first byte in RAM to be written.
+; The block of bytes will be copied from RAM to EEprom.
+;
+
+writeToEEprom:
+
+loopWTE1:	
+    
+    movf	eepromAddress,W	; load EEprom address at which to store
+	incf	eepromAddress,F	; move to next address in EEprom	
+
+    bsf	    STATUS,RP0		; select bank 1 [for PIC16F648]
+    ;bsf    STATUS,RP1		; select bank 2 [for PIC16F876]
+	
+	movwf	EEADR			; place in EEprom write address register
+
+	movf	INDF,W			; get first byte of block from RAM
+	incf	FSR,F			; move to next byte in RAM
+	movwf	EEDATA			; store in EEprom write data register
+
+	;bsf	STATUS,RP0		; select bank 3 [for PIC16F876]
+    ;bcf	EECON1,EEPGD	; write to EEprom (as opposed to Flash) [for PIC16F876]
+	bsf	    EECON1,WREN		; enable EEprom write
+	bcf	    INTCON,GIE		; disable all interrupts
+	
+	movlw	0x55
+	movwf	EECON2			; put 0x55 into EECON2
+	movlw	0xaa
+	movwf	EECON2			; put 0xaa into EECON2
+	bsf	    EECON1,WR	  	; begin the write process
+
+waitWTE1:	
+    
+    btfsc	EECON1,WR		; loop until WR bit goes low (write finished)
+	goto	waitWTE1
+
+	bcf	EECON1,WREN		    ; disable writes
+	bsf	INTCON,GIE		    ; re-enable interrupts
+
+	bcf	STATUS,RP0		    ; select bank 0
+	bcf	STATUS,RP1
+
+	decfsz	eepromCount,F	; count down number of bytes transferred
+	goto	loopWTE1        ; not zero yet - write more bytes
+
+	return
+
+; end of writeToEEprom
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; interruptHandler
+;
+; All interrupts call this function.  The interrupt flags must be polled to determine which
+; interrupts actually need servicing.
+;
+; Note that after each interrupt type is handled, the interrupt handler returns without checking
+; for other types.  If another type has been set, then it will immediately force a new call
+; to the interrupt handler so that it will be handled.
+;
+; NOTE NOTE NOTE
+; It is important to use no (or very few) subroutine calls.  The stack is only 8 deep and
+; it is very bad for the interrupt routine to use it.
+;
+
+interruptHandler:
+
+	btfsc 	INTCON,T0IF     	; Timer0 overflow interrupt?
+	goto 	timer0Interrupt	    ; YES, so process Timer0
+           
+; Not used at this time to make interrupt handler as small as possible.
+;	btfsc 	INTCON, RBIF      	; NO, Change on PORTB interrupt?
+;	goto 	portB_interrupt       	; YES, Do PortB Change thing
+
+INT_ERROR_LP1:		        	; NO, do error recovery
+	;GOTO INT_ERROR_LP1      	; This is the trap if you enter the ISR
+                               	; but there were no expected interrupts
+
+endISR:
+
+	POP_MACRO               	; MACRO that restores required registers
+
+	retfie                  	; Return and enable interrupts
+
+; end of interruptHandler
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; timer0Interrupt
+;
+; This function is called when the timer 0 registers overflow.
+;
+; NOTE NOTE NOTE
+; It is important to use no (or very few) subroutine calls.  The stack is only 8 deep and
+; it is very bad for the interrupt routine to use it.
+;
+
+timer0Interrupt:            ; Routine when the Timer1 overflows
+
+	bcf 	INTCON,T0IF     ; Clear the Timer0 overflow interrupt flag
+
+    bcf     STATUS,RP0      ; select data bank 0 to access variables
+
+
+
+
+
+
+
+    goto    endISR
+
+; end of timer0Interrupt
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; setUpSerialReceiver
+;
+; Sets up all registers and values used by the serial receive function(s).
+;
+
+setUpSerialReceiver:
+
+	bcf		STATUS,RP0			; select bank 0
 
 	bcf		INTCON,T0IE			; disable TMR0 interrupt
 	bcf		INTCON,GIE			; disable all interrupts
 	clrf	TMR0				; set Timer 0 to zero
-                              
-	clrwdt						; clear the watchdog timer in case it is being used
-                                 
+
 	bsf		STATUS,RP0			; select bank 1
 	
 	movlw	0x58				; set options 0101 1000
@@ -1263,6 +1577,21 @@ receiveSerialByte:
 
 	bcf		STATUS,RP0			; select bank 0
 
+	return
+	
+; end of setUpSerialReceiver
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; receiveSerialByte
+;
+; Waits for incoming data to appear on the serial input line and then converts it into a byte.
+;
+                                 
+receiveSerialByte:
+
+	bcf		STATUS,RP0			; select bank 0
+
 	movlw	0x8					; preset bit counter to 8 bits to make a byte
 	movwf	bitCount
 	
@@ -1270,19 +1599,19 @@ L10b:
  	btfsc	PORTA,SERIAL_IN		; loop until serial in data line gloes low to signal new bit
     goto    L10b				;  this first low is the start bit and will be tossed
 
- 	movlw	0xe2				; set Timer 0 to delay a bit to center sampling near the center of the bit
- 	movwf	TMR0
- 	bcf		INTCON,T0IF			; clear Timer 0 overflow flag
+	movlw	0xe2				; set Timer 0 to delay a bit to center sampling near the center of the bit
+	movwf	TMR0
+	bcf		INTCON,T0IF			; clear Timer 0 overflow flag
 
 L11b:
 	btfss	INTCON,T0IF			; loop until Timer 0 overflow flag is set
-    goto    L11b
-
-	btfsc	PORTA,SERIAL_IN		; check serial input again -- if it is not still low then                         
-    goto    L10b				;  assume it was noise and start over looking for start bit
+	goto    L11b
+ 
+;debug mks	btfsc	PORTA,SERIAL_IN		; check serial input again -- if it is not still low then                         
+;debug mks    goto    L10b				;  assume it was noise and start over looking for start bit
 
 L13b:
-	movlw	0xce				; set Timer 0 to delay until first data bit
+	movlw	0xce				; set Timer 0 to delay between bits
 	movwf	TMR0
 	bcf		INTCON,T0IF			; clear Timer 0 overflow flag
 
@@ -1299,10 +1628,85 @@ L12b:
       
  	decfsz	bitCount,F			; loop for 8 bits                         
     goto    L13b
- 
+
+
+	; wait a while to finish out the last bit so it doesn't get detected as a start bit
+	; when this function is called again immediately
+
+	movlw	0xa0				; set Timer 0 to delay for the rest of the last bit
+	movwf	TMR0
+	bcf		INTCON,T0IF			; clear Timer 0 overflow flag
+
+L15b:
+	btfss	INTCON,T0IF			; loop until Timer 0 overflow flag is set
+    goto    L15b
+
 	return                                 
 
 ; end of receiveSerialByte
 ;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; debug
+;
+                                 
+debug:
+
+	bcf		STATUS,RP0				; select bank 0
+
+	movf	debugCounter,W			; if counter is zero, do not store any more
+ 	sublw	0
+ 	btfsc	STATUS,Z
+	goto	storeDebugDataInEEprom
+
+	decf	debugCounter,F
+
+    movf    debugPointer,W
+    movwf   FSR           
+
+	movf	controlByte,W
+	movwf	INDF
+	incf	FSR,F
+
+	movf	lcdData,W
+	movwf	INDF
+	incf	FSR,F
+
+	movf	FSR,W
+	movwf	debugPointer
+
+	return
+
+storeDebugDataInEEprom:
+
+	movf	debugPointer,W			; if pointer has been set to zero, already stored to eeprom so skip
+ 	sublw	0
+ 	btfsc	STATUS,Z
+	return
+
+	movlw	.0
+	movwf	debugPointer
+
+;eepromAddress set to zero by setup code -- will get incremented by each
+;call to writeToEEprom
+
+	movlw	eeScratch0		; beginning of storage buffer in eeprom
+	movwf	eepromAddress
+
+    movlw   db0        		; address in RAM
+    movwf   FSR
+
+    movlw   .30
+    movwf   eepromCount     ; write 1 byte
+
+    call    writeToEEprom
+
+debugFreeze:
+
+	goto	debugFreeze
+
+; end of debug
+;--------------------------------------------------------------------------------------------------
+
  
     END
