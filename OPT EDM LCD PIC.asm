@@ -259,6 +259,9 @@ FINAL_BIT_LOOP_DELAY			EQU	.22				; used in decfsz loops to delay after the fina
 DISPLAY_ON_OFF_CMD_MASK	EQU 0xf8		; masks lower bits off on/off command to leave only the command type
 DISPLAY_ON_OFF_CMD		EQU 0x08		; the upper bits which specify the command type
 
+DISP_ON_CURSOR_OFF_BLINK_OFF_CMD	equ 0x0c	; command to turn display on, cursor off, blink off
+
+
 ADDRESS_SET_BIT	EQU		.7		; set in LCD control codes to specify an address change byte
 
 MAX_COLUMN      EQU     .19		; highest column number (20 columns)
@@ -692,6 +695,12 @@ setup:
 	bcf	    STATUS,RP0	    ; back to Bank 0
     bcf     STATUS,RP1	    ; back to Bank 0
 
+	movlw	LCD_COLUMN0_START
+	movwf	currentCursorLocation
+
+	movlw	DISP_ON_CURSOR_OFF_BLINK_OFF_CMD
+	movwf	currentLCDOnOffState
+
 	return
 
 ; end of setup
@@ -921,9 +930,15 @@ incrementLCDOutBufferPointers:
 	incf	lcdOutLine,F	; track line number
 	movf	lcdOutLine,W	; check if highest line number reached
  	sublw	PAST_MAX_LINE
- 	btfsc	STATUS,Z
-    clrf	lcdOutLine
+ 	btfss	STATUS,Z
+	goto	setLCDVariablesPerLineNumber    ; highest not reached
 
+	; highest line number reached -- handle end of refresh tasks
+
+	call	handleEndOfRefreshTasks
+
+	bsf     STATUS,RP0      				; back to bank 1 
+	clrf	lcdOutLine						; start over at line 0
 	call	setLCDVariablesPerLineNumber
 
 noRollOver:
@@ -931,6 +946,38 @@ noRollOver:
 	return
 
 ; end of incrementLCDOutBufferPointers
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; handleEndOfRefreshTasks
+;
+; Performs tasks required at the end of a refresh such as setting cursor and blink on/off states.
+;
+; Bank selection not important on entry.
+;
+
+handleEndOfRefreshTasks:
+
+	bcf		STATUS,RP0			; select bank 0
+
+	; refreshing the buffer moves the cursor location with each character sent
+	; set the cursor location to the last location specified by the "Main" PIC
+
+	movf	currentCursorLocation,W
+	movwf	lcdData         	; store for use by writeLCDData function
+    call    writeLCDInstruction
+
+	; the cursor and blink are turned off at the start of each buffer refresh to eliminate
+	; flicker as they follow each character sent; at the end of each refresh, set them
+	; to the last state specified by the "Main" PIC
+
+	movf	currentLCDOnOffState,W
+	movwf	lcdData         	; store for use by writeLCDData function
+    call    writeLCDInstruction
+
+	return
+
+; end of handleEndOfRefreshTasks
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
