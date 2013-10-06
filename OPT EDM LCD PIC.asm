@@ -46,6 +46,8 @@
 ;
 ; The E line is used to strobe the read/write operations.
 ;
+; Addressing ---
+;
 ; LCD ADDRESSING NOTE: LCD addressing is screwy - the lines are not in sequential order:
 ;
 ; line 1 column 1 = 0x80  	(actually address 0x00)
@@ -66,6 +68,17 @@
 ;
 ; Note that the user manual offered by Optrex shows the line addresses
 ; for 20 character wide displays at the bottom of page 20.
+;
+; Cursor and Blinking ---
+;
+; The display has the capability to display a cursor and/or blink the character at the cursor
+; location. This is not used in this program. Since the screen is refreshed by redrawing
+; constantly, the cursor or blinking is seen racing across the screen as it follows each character
+; written. It was too complicated to turn it off during refresh, then delay long enough for it
+; to be seen after turning it back on.
+;
+; Instead, blinking is handled in the PIC code by replacing the character to be blinked by a
+; space when it is transmitted.
 ;
 ;--------------------------------------------------------------------------------------------------
 ; Notes on PCLATH
@@ -269,7 +282,7 @@ BLINK_ON_OFF_CMD_FLAG	EQU	.0
 
 ; control bits in flags
 
-BLINK_ON_OFF_FLAG		EQU		.0
+UNUSED_FLAG_BIT0		EQU		.0
 CHAR_AT_CURSOR_STATE	EQU		.1
 
 
@@ -331,7 +344,7 @@ BLINK_ON_FLAG			EQU		0x01
 
  cblock 0x20                ; starting address
 
-    flags                   ; bit 0: 0 = blink is off : 1 = blink is on
+    flags                   ; bit 0: unused
                             ; bit 1: 0 = char at cursor is off : 1 = char at cursor is on
                             ; bit 2:
                             ; bit 3:
@@ -1001,6 +1014,9 @@ noRollOver:
 ; handleEndOfRefreshTasks
 ;
 ; Performs tasks required at the end of a refresh such as setting cursor and blink on/off states.
+; 
+; Note: The cursor and blink functions of the display are not used -- the PIC code handles those
+; functions. See notes "Cursor and Blinking" in this file.
 ;
 ; Bank selection not important on entry.
 ;
@@ -1025,22 +1041,7 @@ handleEndOfRefreshTasks:
 	btfss	currentLCDOnOffState,BLINK_ON_OFF_CMD_FLAG
 	goto	blinkIsOffHERT
 
-	; blinking is on -- see if character at cursor should be on or off and check rate timer
-
-	; if character state is off, overwrite character with a space
-
-	btfsc	flags,CHAR_AT_CURSOR_STATE
-	goto	charAtCursorNotOff
-
-	; at the current time, character is off so replace it with a space
-
-	;debug mks movlw	' '
-	;debug mks movwf	lcdData         	; store for use by writeLCDData function
-    ;debug mks call    writeLCDData
-
-charAtCursorNotOff:
-
-	; see if blink rate counter has timed out
+	; blinking is on -- check if blink rate counter has timed out
 
 	decfsz	charBlinkRate,F
 	goto	blinkIsOffHERT
@@ -1053,15 +1054,6 @@ charAtCursorNotOff:
 	movf	flags,W					; flip the character at cursor on/off state flag
 	xorlw	CHAR_AT_CURSOR_STATE_XOR_MASK
 	movwf	flags
-
-
-;debug mks
-;	movf	currentLCDOnOffState,W
-;	movwf	lcdData         	; store for use by writeLCDData function
-;    call    writeLCDInstruction
-
-;	bsf		flags,BLINK_ON_OFF_FLAG	; flag that blinking is currently on
-;debug mks
 
 blinkIsOffHERT:
 
