@@ -68,22 +68,55 @@
 ; for 20 character wide displays at the bottom of page 20.
 ;
 ;--------------------------------------------------------------------------------------------------
+; Notes on PCLATH
+;
+; The program counter (PC) is 13 bits. The lower 8 bits can be read and written as register PCL.
+; The upper bits cannot be directly read or written.
+;
+; When a goto is executed, 11 bits embedded into the goto instruction are loaded into the PC<10:0>
+; while bits PCLATH<4:3> are copied to bits PC<12:11>
+;
+; When a goto is executed, 11 bits embedded into the goto instruction are loaded into the lower
+; 11 bits of PC while bits PCLATH<4:3> are copied to bits PC<12:11>
+;
+; Changing PCLATH does NOT instantly change the PC register. The PCLATH will be used the next time
+; a goto is executed (or similar opcode) or the PCL register is written to. Thus, to jump farther
+; than the 11 bits (2047 bytes) in the goto opcode will allow, the PCLATH register is adjusted
+; first and then the goto executed.
+;
+;--------------------------------------------------------------------------------------------------
 ; Serial Data from Main PIC
 ;
-; The Main PIC sends data to this PIC via PortA,0 (RA0). A word is sent for each command/data
-; value:
+; These notes are nearly identical for "OPT EDM LCD PIC.ASM" and "EDM MAIN PIC.ASM". Changes to
+; either should be copied to the other. The "LCD" version uses internal 4Mhz clock for Fosc
+; while "MAIN" uses external ???Mhz clock. Thus the timing are different for using Timer0 as
+; an interrupt source.
 ;
-; Data Format
+; The "Main" PIC sends data to the "LCD" PIC via PortA,0 (RA0). A word is sent for each 
+; command/data value:
+;
+; Data Format --
 ;
 ; the first byte is a control byte and specifies either an LCD command or an LCD character
 ; 	0 = data; 1 = command; other may be a command for a different PIC listening on the same line
 ;
 ; the second byte is either an LCD command or an LCD character
 ;
+; PIC16 Timing --
+;
+; These notes were verified using an oscilloscope.
+;
+; The "LCD" PIC is configured to use the internal oscillator of 4Mhz (FOSC). The instruction cycle
+; frequency is Fosc/4. All instructions except branches take 1 cycle.
+;
+; Timer0 increment frequency is Fosc/4 without prescaler -- in the "LCD" program the prescaler
+; is assigned to the WatchDog, thus Timer0 freq = Fosc/4 (same as the cycle frequency)
+;
+; Serial Timing --
 ;
 ; each serial bit from the Main PIC is 72 uS wide 
 ;
-; a single instruction cycle (a nop) on this LCD PIC is 1uS wide
+; a single instruction cycle (a nop) on the "LCD" PIC is 1uS wide
 ; a goto instruction is 3uS
 ; a simple decfsz loop can be used for bit to bit timing
 ;
@@ -105,20 +138,29 @@
 ; 
 ; in actual use: 24 -> 73.6 uS and 23 -> 70.4 uS; value of 24 is closest
 ;
-; for reasonably accurate detection of a start bit, checking the input every 1/3 bit width (24 uS)
-; is necessary -- worst case should be detecting the start bit 2/3 after the down transition
-; this should be close enough to successfully detect the remaining 8 bits, allowing for 24 uS
-; of timing slop
-; 
 ; Version 1.0 of the LCD PIC code read the word all at one time and then transmitted to the display
-; between words. The time between words is significantly larger allowing for the time for the
-; display update. For version 2.0, which constantly refreshes the display from a local buffer,
-; the time required for display access code is more than that allowed between incoming serial words.
-; Thus, an interrupt is used to monitor for start bits.
+; between words without using an interrupt. The time between words is significantly larger
+; allowing for the time for the display update. For version 2.0, which constantly refreshes the
+; display from a local buffer, the time required for display access code is more than that allowed
+; between incoming serial words. Thus, an interrupt is used to monitor for start bits.
 ;
-; The interrupt must occur every 24 uS, which allow 24 instruction cycles of the main code between
-; interrupts. The display updating is not particularly time sensitive, so the high interrupt rate
-; shouldn't be a problem.
+; For reasonably accurate detection of a start bit, checking the input every 1/3 bit width (24 uS)
+; is desired -- worst case should be detecting the start bit 2/3 after the down transition
+; this should be close enough to successfully detect the remaining 8 bits, allowing for 24 uS
+; of timing slop...
+;
+; ...HOWEVER...
+;
+; ...the interrupt takes up 24 cycles or more at its quickest and the program would spend all of
+; its time in the interrupt routine. So the input will actually be checked every 36 uS (36 cycles)
+; or one/half the time between bits. This still leaves only 12 cycles or so for the main thread
+; to execute for every call to the interrupt, but the main thread is not time critical.
+;
+; When the interrupt detects a start bit, the main thread will not run again until an entire
+; word is read. This could probably be changed to return to the main thread while waiting for the
+; next bit, but that would require another mode flag check, more lost cycles, and a lot more
+; complexity. The main thread will get 12 cycle blocks when between words and when the "Main" PIC
+; is not sending data.
 ;
 ;--------------------------------------------------------------------------------------------------
 
@@ -131,6 +173,11 @@
 
     errorLevel  -302 ; Suppresses Message[302] Register in operand not in bank 0.
 
+	errorLevel	-202 ; Suppresses Message[205] Argument out of range. Least significant bits used.
+					 ;	(this is displayed when a RAM address above bank 1 is used -- it is
+					 ;	 expected that the lower bits will be used as the lower address bits)
+
+
 #INCLUDE <P16f648a.inc> 		; Microchip Device Header File
 
 #INCLUDE <STANDARD.MAC>     	; include standard macros
@@ -139,7 +186,7 @@
 
 	__CONFIG _INTOSC_OSC_CLKOUT & _WDT_OFF & _PWRTE_ON & _MCLRE_OFF & _BOREN_OFF & _LVP_OFF & _CPD_OFF & _CP_OFF
 
-;_INTOSC_OSC_CLKOUT = uses internal oscillator, clock is output on RA6
+;_INTOSC_OSC_CLKOUT = uses internal oscillator, clock can be output on RA6
 ;_WDT_OFF = watch dog timer is off
 ;_PWRTE_ON = device will delay startup after power applied to ensure stable operation
 ;_MCLRE_OFF = RA5/MCLR/VPP pin function is digital input, MCLR internally to VDD
@@ -173,6 +220,10 @@ LCD_DATA        EQU     0x06		; PORTB
 ;--------------------------------------------------------------------------------------------------
 ; Constant Definitions
 ;
+
+TIMER0_RELOAD_START_BIT_SEARCH	EQU	.255-.36		; interrupt every 36 us (32 cycles)
+													; half of the 72 uS (72 cycles) between serial bits
+													; see note "Serial Data from Main PIC" in this file
 
 ; bits in flags variable
 
@@ -225,6 +276,7 @@ BLINK_ON_FLAG			EQU		0x01
 ; 
 
 ; Assign variables in RAM - Bank 0 - must set RP0:RP1 to 0:0 to access
+; Bank 0 has 80 bytes of free space
 
  cblock 0x20                ; starting address
 
@@ -237,9 +289,15 @@ BLINK_ON_FLAG			EQU		0x01
 							; bit 6:
 							; bit 7:
 
+	newControlByte			; new control bytes stored here by interrupt routine
+	newLCDData				; new data bytes stored here by interrupt routine
+
+	controlByte				; the first byte of each serial data byte pair is stored here
 	lcdData					; stores data byte to be written to the LCD
 	newSerialByte			; each serial data byte is stored here upon being received
-	controlByte				; the first byte of each serial data byte pair is stored here
+
+
+
 
 	smallDelayCnt			; used to count down for small delay
 	bigDelayCnt				; used to count down for big delay
@@ -249,6 +307,8 @@ BLINK_ON_FLAG			EQU		0x01
 	scratch1				; scratch pad variable
 	scratch2				; scratch pad variable
 
+	intScratch0				; scratch pad variable for exclusive use by interrupt code
+	
     eepromAddress		    ; use to specify address to read or write from EEprom
     eepromCount	        	; use to specify number of bytes to read or write from EEprom
 
@@ -285,13 +345,12 @@ BLINK_ON_FLAG			EQU		0x01
 	db28
 	db29
 
-
-
-
  endc
 
+;-----------------
 
 ; Assign variables in RAM - Bank 1 - must set RP0:RP1 to 0:1 to access
+; Bank 1 has 80 bytes of free space
 
  cblock 0xa0                ; starting address
 
@@ -311,9 +370,27 @@ BLINK_ON_FLAG			EQU		0x01
 
 	lcdInColumn				; current column being written to in the buffer
 	lcdBufInPtr				; write to buffer from master PIC pointer
+
+ endc
+
+;-----------------
+
+; Assign LCD character buffer in RAM - Bank 2 - RP0:RP1 to 1:0 to access
+; Bank 2 has 80 bytes of free space
+
+; To access this bank (Bank 2) indirectly, STATUS:IRP must be set to 1
+
+; This buffer is often accessed indirectly (using the FSR/INDF registers)
+; The INDF register provides the lower 8 bits of the indirect address while the
+; IRP bit in the STATUS register provides the 9th bit to allow access of any
+; RAM location in any bank.
+
+; LCD character buffer -- 4 lines x 20 characters each
+; see "LCD ADDRESSING NOTE" in header notes at top of page for addressing explanation
+
+; WARNING -- the buffer entirely fills Bank 2 -- do not add any variables to this bank
 	
-	; LCD character buffer -- 4 lines x 20 characters each
-	; see "LCD ADDRESSING NOTE" in header notes at top of page for addressing explanation
+ cblock 0x120		; starting address
 
 	; line 1
 
@@ -408,11 +485,23 @@ BLINK_ON_FLAG			EQU		0x01
 	lcd79
 
  endc
+
+; WARNING -- the buffer entirely fills Bank 2 -- do not add any variables to this bank
+
+;-----------------
  
 ; Define variables in the memory which is mirrored in all 4 RAM banks.  This area is usually used
 ; by the interrupt routine for saving register states because there is no need to worry about
 ; which bank is current when the interrupt is invoked.
 ; On the PIC16F628A, 0x70 thru 0x7f is mirrored in all 4 RAM banks.
+
+; NOTE:
+; This block cannot be used in ANY bank other than by the interrupt routine.
+; The mirrored sections:
+;
+;	Bank 0		Bank 1		Bank 2		Bank3
+;	70h-7fh		f0h-ffh		170h-17fh	1f0h-1ffh
+;
 
  cblock	0x70
     W_TEMP
@@ -420,6 +509,8 @@ BLINK_ON_FLAG			EQU		0x01
     STATUS_TEMP
     PCLATH_TEMP	
  endc
+
+;-----------------
 
 ; end of Variables in RAM
 ;--------------------------------------------------------------------------------------------------
@@ -444,6 +535,14 @@ BLINK_ON_FLAG			EQU		0x01
 ;--------------------------------------------------------------------------------------------------
 ; Power On and Reset Vectors
 ;
+; Note: handleInterrupt not used:
+;
+;  In most programs, handleInterrupt is called to determine the type of interrupt. The timing is
+;  so tight in this program that the function is not used to save time in the interrupt when there
+;  is no data to process. Since only the Timer0 interrupt is used, it is assumed that any
+;  interrupt is a Timer0 interrupt. The serial input bit is checked and handleTimer0Interrupt is
+;  called directly if it is low (a start bit).
+;
 
 	org 0x00                ; Start of Program Memory
 
@@ -451,7 +550,6 @@ BLINK_ON_FLAG			EQU		0x01
 	nop			            ; Pad out so interrupt
 	nop			            ; service routine gets
 	nop			            ; put at address 0x0004.
-
 
 ; interrupt vector at 0x0004
 ; NOTE: You must save values (PUSH_MACRO) and clear PCLATH before jumping to the interrupt
@@ -461,7 +559,22 @@ BLINK_ON_FLAG			EQU		0x01
 	PUSH_MACRO              ; MACRO that saves required context registers
 	clrf	STATUS          ; set to known state
     clrf    PCLATH          ; set to bank 0 where the ISR is located
-    goto interruptHandler	; points to interrupt service routine
+
+	bcf 	INTCON,T0IF     ; Clear the Timer0 overflow interrupt flag
+	movlw	TIMER0_RELOAD_START_BIT_SEARCH
+	movwf	TMR0
+
+	; data bank 0 already selected by clearing STATUS above
+
+	btfss	PORTA,SERIAL_IN
+	goto	handleTimer0Interrupt
+
+	POP_MACRO               		; MACRO that restores required registers
+
+	retfie                  		; return and enable interrupts
+
+	; handleInterrupt is skipped in this program -- see note above "Note: handleInterrupt not used."
+    ;goto 	handleInterrupt	; points to interrupt service routine
 
 ; end of Reset Vectors
 ;--------------------------------------------------------------------------------------------------
@@ -475,46 +588,13 @@ BLINK_ON_FLAG			EQU		0x01
 
 start:
 
-    clrf    INTCON          ; disable all interrupts
+	call	setup			; set up main variables and hardware
 
-	movlw	0x07			; turn off comparator, PortA pins set for I/O                              
- 	movwf	CMCON           ; 7 -> Comparator Control Register to disable comparator inputs
-
- 	bsf 	STATUS,RP0		; select bank 1
-
-	movlw 	0x01                              
- 	movwf 	TRISA			; 0x01 -> TRISA = PortA I/O 0000 0001 (1=input, 0=output)
-    						;	RA0 - Input : receives serial input data
-							;	RA1 - Output: E strobe to initiate LCD R/W
-							;	RA2 - Output: Register Select for LCD
-							;	RA3 - Output: unused (pulled high for some reason)
-							;	RA4 - Output: unused (pulled high for some reason)
-							;	RA5 - Vpp for PIC programming, unused otherwise
-							;	RA6 - unused (unconnected)
-							;	RA7 - unused (unconnected)
- 	movlw 	0x00
- 	movwf	TRISB			; 0x00 -> TRISB = PortB I/O 0000 0000 (1=input, 0=output)
-							;	port B outputs data to the LCD display
-							; 	RB6 is also used for programming the PIC
-							; 	RB7 is also used for programming the PIC
-
- 	bcf 	STATUS,RP0		; select bank 0                          
-
- 	movlw	0x00			                                
- 	movwf	PORTB			; set Port B outputs low                              
-
- 	bcf		PORTA,LCD_E     ; set LCD E strobe low (inactive)
-	bcf		PORTA,LCD_RS	; set LCD Register Select low (chooses instruction register)
-	bsf		PORTA,UNUSED1	; set high to match pullup (unused)
-	bcf		PORTA,UNUSED2   ; set high to match pullup (unused)
-                    
    	call    bigDelay		; should wait more than 15ms after Vcc = 4.5V
     
 	call    initLCD
 
 	bcf 	STATUS,RP0		; select bank 0
-
-	call	setUpSerialReceiver
 
 	call	setUpLCDCharacterBuffer
 
@@ -526,8 +606,8 @@ start:
 
 	bcf 	STATUS,RP0		; select bank 0
 
-	movlw	0xff			; 0xff in control byte means no new serial data
-	movwf	controlByte		; it is changed when a new value is received
+	movlw	0xff			; 0xff in newControlByte means no new serial data
+	movwf	newControlByte	; it is changed when a new value is received
 
 	movlw	.30				; save 255 values
 	movwf	debugCounter
@@ -546,41 +626,10 @@ mainLoop:
 
 	bcf		STATUS,RP0			; select bank 0
 
-
-;debug mks
-
-dbml1:
-
-	movlw	0x2
-	movwf	scratch0
-
-	bsf		LCD_CTRL,UNUSED1
-                             
-dbml2:
-	decfsz	scratch0,F                         
-    goto    dbml2
-
-	bcf		LCD_CTRL,UNUSED1
-
-	movlw	.24
-	movwf	scratch0
-
-	bsf		LCD_CTRL,UNUSED1
-                             
-dbml3:
-	decfsz	scratch0,F                         
-    goto    dbml3
-
-	bcf		LCD_CTRL,UNUSED1
-
-	goto dbml1
-
-
-;debug mks
-
-
-;debug mks	btfss	PORTA,SERIAL_IN		; skip if serial is not low to signal start bit of incoming data
-	call	receiveAndHandleSerialWord
+	movf	newControlByte,W	; if newControlByte is 0xff, then no new data to process
+ 	sublw	0xff
+ 	btfss	STATUS,Z
+	call	handleDataFromMainPIC
 
 	bcf		STATUS,RP0			; select bank 0
 
@@ -592,9 +641,89 @@ dbml3:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; receiveAndHandleSerialWord
+; setup
 ;
-; Waits for and reads a word of data from the serial in port and then processes the data.
+; Presets variables and configures hardware.
+;
+
+setup:
+
+	; make sure both bank selection bits are set to Bank 0
+
+	bcf	    STATUS,RP0	    ; back to Bank 0
+    bcf     STATUS,RP1	    ; back to Bank 0
+
+    clrf    INTCON          ; disable all interrupts
+
+	movlw	0x07			; turn off comparator, PortA pins set for I/O                              
+ 	movwf	CMCON           ; 7 -> Comparator Control Register to disable comparator inputs
+
+    movlw   0xff
+    movwf   PORTA           ; 0xff -> Port A
+
+ 	movlw	0x00			                                
+ 	movwf	PORTB			; set Port B outputs low
+
+ 	bsf 	STATUS,RP0		; select bank 1
+
+	movlw 	0x01                              
+ 	movwf 	TRISA			; 0x01 -> TRISA = PortA I/O 0000 0001 b (1=input, 0=output)
+    						;	RA0 - Input : receives serial input data
+							;	RA1 - Output: E strobe to initiate LCD R/W
+							;	RA2 - Output: Register Select for LCD
+							;	RA3 - Output: unused (pulled high for some reason)
+							;	RA4 - Output: unused (pulled high for some reason)
+							;	RA5 - Vpp for PIC programming, unused otherwise
+							;	RA6 - unused (unconnected)
+							;	RA7 - unused (unconnected)
+ 	movlw 	0x00
+ 	movwf	TRISB			; 0x00 -> TRISB = PortB I/O 0000 0000 b (1=input, 0=output)
+							;	port B outputs data to the LCD display
+							; 	RB6 is also used for programming the PIC
+							; 	RB7 is also used for programming the PIC
+
+	movlw	0x58			; set options 0101 1000 b
+	movwf	OPTION_REG		; bit 7 = 0: PORTB pull-ups are enabled by individual port latch values
+     						; bit 6 = 1: RBO/INT interrupt on rising edge
+							; bit 5 = 0: TOCS ~ Timer 0 run by internal instruction cycle clock (CLKOUT ~ Fosc/4)
+							; bit 4 = 1: TOSE ~ Timer 0 increment on high-to-low transition on RA4/T0CKI/CMP2 pin (not used here)
+							; bit 3 = 1: PSA ~ Prescaler assigned to WatchDog; Timer 0 will be 1:1 with Fosc/4
+                            ; bit 2 = 0 : Bits 2:0 control prescaler:
+                            ; bit 1 = 0 :    000 = 1:2 scaling for Timer0 (if assigned to Timer0)
+                            ; bit 0 = 0 :
+
+ 	bcf 	STATUS,RP0		; select bank 0                          
+
+ 	bcf		PORTA,LCD_E     ; set LCD E strobe low (inactive)
+	bcf		PORTA,LCD_RS	; set LCD Register Select low (chooses instruction register)
+	bsf		PORTA,UNUSED1	; set high to match pullup (unused)
+	bcf		PORTA,UNUSED2   ; set high to match pullup (unused)
+
+; enable the interrupts
+
+
+	bsf	    INTCON,PEIE	    ; enable peripheral interrupts (Timer0 is a peripheral)
+    bsf     INTCON,T0IE     ; enabe TMR0 interrupts
+    bsf     INTCON,GIE      ; enable all interrupts
+
+	; make sure both bank selection bits are set to Bank 0
+
+	bcf	    STATUS,RP0	    ; back to Bank 0
+    bcf     STATUS,RP1	    ; back to Bank 0
+
+	return
+
+; end of setup
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; handleDataFromMainPIC
+;
+; Processes the values in controlByte and lcdData.
+;
+; NOTE: This function must be called faster than the interrupt routine is reading consecutive
+; words. The words have a delay between them which allows for more time between calls to this
+; function.
 ;
 ; Control codes other than address changes and clear screen commands are written to the LCD
 ; display immediately. Address changes and data values are used to address and store in the local
@@ -603,22 +732,19 @@ dbml3:
 ; Data bank 0 should be selected on entry.
 ;
 
-receiveAndHandleSerialWord:
-
-	; the receiveSerialByte function will wait until data is present on the serial line
-
-	clrf	newSerialByte			
-    call    receiveSerialByte		; wait for and receive the first byte of the next instruction/data byte pair
-	movf	newSerialByte,W         ; store the first byte (control)
-	movwf	controlByte
-                             
-	clrf	newSerialByte                       
-    call    receiveSerialByte
-	movf	newSerialByte,W			; store the second byte (could be instruction or data for the LCD)
-	movwf	lcdData                             
+handleDataFromMainPIC:
 	
-	goto	debug	;debug mks
+	;copy the values to working variables so interrupt routine can use new variables
+	
+	movf	newControlByte,W
+	movwf	controlByte
+	movf	newLCDData,W
+	movwf	lcdData
 
+	movlw	0xff					; signal that no new data in the new variables
+	movwf	newControlByte
+
+	goto	debug	;debug mks -- store the controlByte and lcdData in eeprom
 
 	movf	controlByte,W			; if the control byte is 0, then the second byte is data for the LCD
  	sublw	0
@@ -633,7 +759,7 @@ receiveAndHandleSerialWord:
 
 	return
 
-; end of receiveAndHandleSerialWord
+; end of handleDataFromMainPIC
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -695,11 +821,13 @@ notAddressChangeCmd:
 ; reached, the line pointer is incremented to the next line.
 ;
 ; Bank selection not important on entry.
+; STATUS:IRP is modified
 ;
 
 writeNextCharInBufferToLCD:
 
 	bsf     STATUS,RP0      ; select data bank 1 to access LCD buffer variables
+    bsf     STATUS,IRP      ; use upper half of memory for indirect addressing of LCD buffer
 
     movf    lcdBufOutPtr,W  ; get pointer to next character to be written to LCD
     movwf   FSR             ; point indirect register FSR at the character    
@@ -833,11 +961,13 @@ writeLCDInstructionAndExit:
 ; when the local buffer is next transmitted to the display.
 ;
 ; Bank selection not important on entry.
+; STATUS:IRP is modified     bsf     STATUS,IRP      ; use upper half of memory for indirect addressing of LCD buffer
 ;
 
 clearLCDLocalBuffer:
 
    	bsf     STATUS,RP0      ; select data bank 1 to access LCD buffer variables
+    bsf     STATUS,IRP      ; use upper half of memory for indirect addressing of LCD buffer
 
 	movlw	LCD_BUFFER_SIZE	; set up loop counter
 	movwf	lcdScratch0
@@ -925,6 +1055,7 @@ setLCDBufferWriteAddress:
 ; until the address is reset.
 ;
 ; Bank 0 should be selected on entry.
+; STATUS:IRP is modified
 ;
 
 writeToLCDBuffer:
@@ -932,6 +1063,7 @@ writeToLCDBuffer:
 	movf	lcdData,W		; get the byte to be stored
 
    	bsf     STATUS,RP0      ; select data bank 1 to access LCD buffer variables
+    bsf     STATUS,IRP      ; use upper half of memory for indirect addressing of LCD buffer
 
 	movwf	lcdScratch0		; store byte in bank 1 for easy access
 
@@ -1486,6 +1618,8 @@ strobeE:
 ; NOTE: This function must be modified for use with PIC16F876 - look for
 ;  notes in the function referring to PIC16F876 for details
 ; 
+; STATUS:IRP is modified
+;
 
 readFromEEprom:
 
@@ -1494,6 +1628,8 @@ loopRFE1:
 	movf	eepromAddress,W	; load EEprom address from which to read
 	incf	eepromAddress,F	; move to next address in EEprom	
 	    
+    bcf     STATUS,IRP      ; use lower half of memory for indirect addressing of debug buffer
+
     bsf	    STATUS,RP0		; select bank 1 [for PIC16F648]
     ;bsf    STATUS,RP1		; select bank 2 [for PIC16F876]
 	
@@ -1529,11 +1665,15 @@ loopRFE1:
 ; Indirect register (FSR) should point to first byte in RAM to be written.
 ; The block of bytes will be copied from RAM to EEprom.
 ;
+; STATUS:IRP is modified
+;
 
 writeToEEprom:
 
 loopWTE1:	
     
+    bcf     STATUS,IRP      ; use lower half of memory for indirect addressing of debug buffer
+
     movf	eepromAddress,W	; load EEprom address at which to store
 	incf	eepromAddress,F	; move to next address in EEprom	
 
@@ -1577,7 +1717,10 @@ waitWTE1:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; interruptHandler
+; handleInterrupt
+;
+; NOT USED -- handleInterrupt is skipped in this program -- see note in this file:
+;	 "Note: handleInterrupt not used."
 ;
 ; All interrupts call this function.  The interrupt flags must be polled to determine which
 ; interrupts actually need servicing.
@@ -1590,54 +1733,29 @@ waitWTE1:
 ; It is important to use no (or very few) subroutine calls.  The stack is only 8 deep and
 ; it is very bad for the interrupt routine to use it.
 ;
+; Data bank 0 should be selected on entry.
+;
 
-interruptHandler:
+handleInterrupt:
 
-	btfsc 	INTCON,T0IF     	; Timer0 overflow interrupt?
-	goto 	timer0Interrupt	    ; YES, so process Timer0
+	btfsc 	INTCON,T0IF     		; Timer0 overflow interrupt?
+	goto 	handleTimer0Interrupt	; YES, so process Timer0
            
 ; Not used at this time to make interrupt handler as small as possible.
-;	btfsc 	INTCON, RBIF      	; NO, Change on PORTB interrupt?
+;	btfsc 	INTCON, RBIF      		; NO, Change on PORTB interrupt?
 ;	goto 	portB_interrupt       	; YES, Do PortB Change thing
 
-INT_ERROR_LP1:		        	; NO, do error recovery
-	;GOTO INT_ERROR_LP1      	; This is the trap if you enter the ISR
-                               	; but there were no expected interrupts
+INT_ERROR_LP1:		        		; NO, do error recovery
+	;GOTO INT_ERROR_LP1      		; This is the trap if you enter the ISR
+                               		; but there were no expected interrupts
 
 endISR:
 
-	POP_MACRO               	; MACRO that restores required registers
+	POP_MACRO               		; MACRO that restores required registers
 
-	retfie                  	; Return and enable interrupts
+	retfie                  		; Return and enable interrupts
 
-; end of interruptHandler
-;--------------------------------------------------------------------------------------------------
-
-;--------------------------------------------------------------------------------------------------
-; timer0Interrupt
-;
-; This function is called when the timer 0 registers overflow.
-;
-; NOTE NOTE NOTE
-; It is important to use no (or very few) subroutine calls.  The stack is only 8 deep and
-; it is very bad for the interrupt routine to use it.
-;
-
-timer0Interrupt:            ; Routine when the Timer1 overflows
-
-	bcf 	INTCON,T0IF     ; Clear the Timer0 overflow interrupt flag
-
-    bcf     STATUS,RP0      ; select data bank 0 to access variables
-
-
-
-
-
-
-
-    goto    endISR
-
-; end of timer0Interrupt
+; end of handleInterrupt
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -1650,8 +1768,14 @@ timer0Interrupt:            ; Routine when the Timer1 overflows
 ; program flow -- the delays all happen at the end of the capture when the block is written to
 ; eeprom.
 ;
+; STATUS:IRP is modified
+;
                                  
 debug:
+
+	return
+	
+    bcf     STATUS,IRP      ; use lower half of memory for indirect addressing of debug buffer
 
 	bcf		STATUS,RP0				; select bank 0
 
@@ -1710,41 +1834,23 @@ debugFreeze:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; setUpSerialReceiver
+; handleTimer0Interrupt
 ;
-; Sets up all registers and values used by the serial receive function(s).
+; This function is called when the Timer0 register overflows.
+;
+; Data bank 0 should be selected on entry.
+;
+; NOTE NOTE NOTE
+; It is important to use no (or very few) subroutine calls.  The stack is only 8 deep and
+; it is very bad for the interrupt routine to use it.
 ;
 
-setUpSerialReceiver:
+handleTimer0Interrupt:
 
-	bcf		STATUS,RP0			; select bank 0
+	bsf		LCD_CTRL,UNUSED1
+	bcf		LCD_CTRL,UNUSED1
 
-	bcf		INTCON,T0IE			; disable TMR0 interrupt
-	bcf		INTCON,GIE			; disable all interrupts
-	clrf	TMR0				; set Timer 0 to zero
-
-	bsf		STATUS,RP0			; select bank 1
-	
-	movlw	0x58				; set options 0101 1000
-	movwf	OPTION_REG			; bit 7: PORTB pull-ups are enabled by individual port latch values
-     							; bit 6: Interrupt on rising edge of RB0/INT pin
-								; bit 5: Timer 0 run by internal instruction cycle clock (CLKOUT)
-								; bit 4: Timer 0 increment on high-to-low transition on RA4/T0CKI/CMP2 pin
-								; bit 3: Prescaler is assigned to the WDT
-								; bits 2:0 : WDT rate is 1:1 
-
-	bcf		STATUS,RP0			; select bank 0
-
-	return
-	
-; end of setUpSerialReceiver
-;--------------------------------------------------------------------------------------------------
-
-;--------------------------------------------------------------------------------------------------
-; receiveSerialByte
-;
-; Waits for incoming data to appear on the serial input line and then converts it into a byte.
-;
+    goto    endISR
                                  
 receiveSerialByte:
 
@@ -1801,7 +1907,7 @@ L15b:
 
 	return                                 
 
-; end of receiveSerialByte
+; end of handleTimer0Interrupt
 ;--------------------------------------------------------------------------------------------------
  
     END
