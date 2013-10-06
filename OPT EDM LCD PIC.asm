@@ -255,7 +255,9 @@ FINAL_BIT_LOOP_DELAY			EQU	.22				; used in decfsz loops to delay after the fina
 													; so it won't be seen as the next start bit -- it
 													; is slightly longer than a full bit delay
 
-; bits in flags variable
+
+DISPLAY_ON_OFF_CMD_MASK	EQU 0xf8		; masks lower bits off on/off command to leave only the command type
+DISPLAY_ON_OFF_CMD		EQU 0x08		; the upper bits which specify the command type
 
 ADDRESS_SET_BIT	EQU		.7		; set in LCD control codes to specify an address change byte
 
@@ -321,6 +323,11 @@ BLINK_ON_FLAG			EQU		0x01
 
 	controlByte				; the first byte of each serial data byte pair is stored here
 	lcdData					; stores data byte to be written to the LCD
+	
+	currentCursorLocation	; the current cursor location on the display; this is the
+							; code which is sent to the display to set that location
+	currentLCDOnOffState	; on/off state of the LCD along with cursor on/off and
+							; blink on/off; this is code for the display to set those
 
 	smallDelayCnt			; used to count down for small delay
 	bigDelayCnt				; used to count down for big delay
@@ -335,6 +342,7 @@ BLINK_ON_FLAG			EQU		0x01
 	bitCount				; used to count number of bits received
 	newSerialByte			; each serial data byte is stored here upon being received
 	newControlByte			; new control bytes stored here by interrupt routine
+							; (this one is reset by main thread)
 	newLCDData				; new data bytes stored here by interrupt routine
 
 	; end of variables ONLY written to by interrupt code
@@ -775,7 +783,7 @@ handleDataFromMainPIC:
 	movf	newLCDData,W
 	movwf	lcdData
 
-	movlw	0xff					; signal that no new data in the new variables
+	movlw	0xff					; signal that the new data has been collected
 	movwf	newControlByte
 
 	; call to debug will cause communication to be corrupted with Main PIC when it comes time to
@@ -785,13 +793,13 @@ handleDataFromMainPIC:
 	movf	controlByte,W			; if the control byte is 0, then the second byte is data for the LCD
  	sublw	0
  	btfsc	STATUS,Z
-    call    writeToLCDBuffer		; store byte in the local LCD character buffer
+    goto    writeToLCDBuffer		; store byte in the local LCD character buffer
 
 	bcf		STATUS,RP0				; select bank 0
 	movf	controlByte,W			; if the control byte is 1, then the second byte is an instruction for the LCD
  	sublw	0x1
  	btfsc	STATUS,Z
-    call    handleLCDInstruction
+    goto    handleLCDInstruction
 
 	return
 
@@ -820,32 +828,36 @@ handleLCDInstruction:
  	btfss	STATUS,Z
 	goto	notClearScreenCmd
 
-	call	clearLCDLocalBuffer
-	return	
+	goto	clearLCDLocalBuffer
 
 notClearScreenCmd:
 
-	; check for address change code
+	; check for address change instruction
 
     btfss   lcdData,ADDRESS_SET_BIT	
 	goto	notAddressChangeCmd
-
-	; change the local LCD buffer write address
 	
-	; the buffer is transmitted to the display by another function which sets the address
-	; register in the actual display as needed during the transmission
-
-	call	setLCDBufferWriteAddress
-	
-	return
+	goto	setLCDBufferWriteAddress
 
 notAddressChangeCmd:
 
+	; check for display on/off instruction
+
+	; mask lower bits; leave only type selection bits to compare with commmand
+
+	movlw	DISPLAY_ON_OFF_CMD_MASK
+	andwf	lcdData,W
+	sublw	DISPLAY_ON_OFF_CMD
+ 	btfss	STATUS,Z
+	goto	notDisplayCursorBlinkCmd
+
+	goto	setLCDOnOffAndCursorAndBlink
+
+notDisplayCursorBlinkCmd:
+
 	; transmit all other control codes straight to the display
 
-	call    writeLCDInstruction
-
-	return
+	goto    writeLCDInstruction
 
 ; end of handleLCDInstruction
 ;--------------------------------------------------------------------------------------------------
@@ -1062,12 +1074,13 @@ setUpLCDCharacterBuffer:
 ;
 ; Bank 0 should be selected on entry.
 ;
-; REMEMBER: Borrow flag is inverse: 0 = borrow, 1 = no borrow
-;
 
 setLCDBufferWriteAddress:
 
 	movf	lcdData,W		; load address control code from bank 0
+
+	movwf	currentCursorLocation	; store as the cursor location for later use when the
+									; display is refreshed
 
    	bsf     STATUS,RP0      ; select data bank 1 to access LCD buffer variables
 
@@ -1081,7 +1094,40 @@ setLCDBufferWriteAddress:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; setLCDBufferWriteAddress
+; setLCDOnOffAndCursorAndBlink
+;
+; Stores the state of the display on/off, cursor on/off and blink on/off. This command is not
+; immediately transmitted to the display -- it will be applied the next time the display is
+; refreshed.
+;
+; The "Main" PIC sets the cursor location and then turns blink on when it wants to
+; highlight a character. This causes problems because the latest "LCD" PIC code refreshes
+; the display by redrawing the entire screen -- when blink is activated glitches can be seen
+; zipping across the screen as each character tries to blink as it is written.
+;
+; To solve this, the last cursor location and blink status from the "Main" PIC are stored.
+; Blink is turned off during a refresh; at the end of each refresh cycle, the cursor is
+; briefly positioned at the last location specified by the "Main" PIC and if blink has been
+; set to "on" then it is turned back on to briefly highlight the selected location before
+; the next refresh.
+;
+; Bank 0 should be selected on entry.
+;
+
+setLCDOnOffAndCursorAndBlink:
+
+	movf	lcdData,W		; load address control code from bank 0
+
+	movwf	currentLCDOnOffState	; store as the display on/off, cursor on/off, blink on/off
+									; for use next time the display is refreshed
+
+	return
+
+; end of setLCDOnOffAndCursorAndBlink
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; writeToLCDBuffer
 ;
 ; Writes the byte in lcdData to the local LCD character buffer at memory location stored in
 ; lcdBufInPtr. Pointer lcdBufInPtr is then incremented.
