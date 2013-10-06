@@ -256,10 +256,26 @@ FINAL_BIT_LOOP_DELAY			EQU	.22				; used in decfsz loops to delay after the fina
 													; is slightly longer than a full bit delay
 
 
+CURSOR_BLINK_RATE		EQU .20			; controls how fast the character at the cursor location blinks
+
 DISPLAY_ON_OFF_CMD_MASK	EQU 0xf8		; masks lower bits off on/off command to leave only the command type
 DISPLAY_ON_OFF_CMD		EQU 0x08		; the upper bits which specify the command type
 
 DISP_ON_CURSOR_OFF_BLINK_OFF_CMD	equ 0x0c	; command to turn display on, cursor off, blink off
+
+BLINK_ON_OFF_CMD_FLAG	EQU	.0
+
+
+
+; control bits in flags
+
+BLINK_ON_OFF_FLAG		EQU		.0
+CHAR_AT_CURSOR_STATE	EQU		.1
+
+
+CHAR_AT_CURSOR_STATE_XOR_MASK	EQU		0x02	; use to flip flag bit using XOR
+
+; end of control bits in flags
 
 
 ADDRESS_SET_BIT	EQU		.7		; set in LCD control codes to specify an address change byte
@@ -315,8 +331,8 @@ BLINK_ON_FLAG			EQU		0x01
 
  cblock 0x20                ; starting address
 
-    flags                   ; bit 0: 0 = ??, 1 = ??
-                            ; bit 1:
+    flags                   ; bit 0: 0 = blink is off : 1 = blink is on
+                            ; bit 1: 0 = char at cursor is off : 1 = char at cursor is on
                             ; bit 2:
                             ; bit 3:
                             ; bit 4:
@@ -331,6 +347,8 @@ BLINK_ON_FLAG			EQU		0x01
 							; code which is sent to the display to set that location
 	currentLCDOnOffState	; on/off state of the LCD along with cursor on/off and
 							; blink on/off; this is code for the display to set those
+
+	charBlinkRate			; delay to control blink rate of cursor at character location
 
 	smallDelayCnt			; used to count down for small delay
 	bigDelayCnt				; used to count down for big delay
@@ -695,6 +713,12 @@ setup:
 	bcf	    STATUS,RP0	    ; back to Bank 0
     bcf     STATUS,RP1	    ; back to Bank 0
 
+	movlw	.0
+	movwf	flags
+	
+	movlw	CURSOR_BLINK_RATE		; preset blink rate timer
+	movwf	charBlinkRate
+
 	movlw	LCD_COLUMN0_START
 	movwf	currentCursorLocation
 
@@ -883,6 +907,18 @@ notDisplayCursorBlinkCmd:
 
 writeNextCharInBufferToLCD:
 
+	bcf		STATUS,RP0					; select bank 0
+
+	btfss	flags,BLINK_ON_OFF_FLAG		; check if blinking is on
+	goto	blinkIsOff
+
+	bcf		flags,BLINK_ON_OFF_FLAG		;turn blinking off so it won't show as glitches
+	movlw	DISP_ON_CURSOR_OFF_BLINK_OFF_CMD
+	movwf	lcdData         	; store for use by writeLCDData function
+    call    writeLCDInstruction
+
+blinkIsOff:
+
 	bsf     STATUS,RP0      ; select data bank 1 to access LCD buffer variables
     bsf     STATUS,IRP      ; use upper half of memory for indirect addressing of LCD buffer
 
@@ -971,9 +1007,50 @@ handleEndOfRefreshTasks:
 	; flicker as they follow each character sent; at the end of each refresh, set them
 	; to the last state specified by the "Main" PIC
 
-	movf	currentLCDOnOffState,W
+	; check if "Main" PIC has turned blinking on
+
+	btfss	currentLCDOnOffState,BLINK_ON_OFF_CMD_FLAG
+	goto	blinkIsOffHERT
+
+	; blinking is on -- see if character at cursor should be on or off and check rate timer
+
+	; if character state is off, overwrite character with a space
+
+	btfsc	flags,CHAR_AT_CURSOR_STATE
+	goto	charAtCursorNotOff
+
+	; at the current time, character is off so replace it with a space
+
+	movlw	' '
 	movwf	lcdData         	; store for use by writeLCDData function
-    call    writeLCDInstruction
+    call    writeLCDData
+
+charAtCursorNotOff:
+
+	; see if blink rate counter has timed out
+
+	decfsz	charBlinkRate,F
+	goto	blinkIsOffHERT
+
+	movlw	CURSOR_BLINK_RATE		; reset blink rate timer
+	movwf	charBlinkRate
+
+	; timed out -- switch on/off states of character at cursor location
+
+	movf	flags,W					; flip the character at cursor on/off state flag
+	xorlw	CHAR_AT_CURSOR_STATE_XOR_MASK
+	movwf	flags
+
+
+;debug mks
+;	movf	currentLCDOnOffState,W
+;	movwf	lcdData         	; store for use by writeLCDData function
+;    call    writeLCDInstruction
+
+;	bsf		flags,BLINK_ON_OFF_FLAG	; flag that blinking is currently on
+;debug mks
+
+blinkIsOffHERT:
 
 	return
 
