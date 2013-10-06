@@ -114,7 +114,7 @@
 ;
 ; Serial Timing --
 ;
-; each serial bit from the Main PIC is 72 uS wide 
+; each serial bit from the Main PIC is 64 uS wide 
 ;
 ; a single instruction cycle (a nop) on the "LCD" PIC is 1uS wide
 ; a goto instruction is 3uS
@@ -134,9 +134,9 @@
 ;
 ;  2 -> 5 uS
 ;  3 -> 8 uS (each additional count -> 3 uS)
-; 24.3 -> 72 uS  ~ ((72 - 5) / 3) + 2
+; 21 -> 64 uS  ~ ((64 - 5) / 3) + 2
 ; 
-; in actual use: 24 -> 73.6 uS and 23 -> 70.4 uS; value of 24 is closest
+; in actual use: 19 gives the closest result taking all loop cycles into account
 ;
 ; Version 1.0 of the LCD PIC code read the word all at one time and then transmitted to the display
 ; between words without using an interrupt. The time between words is significantly larger
@@ -144,16 +144,16 @@
 ; display from a local buffer, the time required for display access code is more than that allowed
 ; between incoming serial words. Thus, an interrupt is used to monitor for start bits.
 ;
-; For reasonably accurate detection of a start bit, checking the input every 1/3 bit width (24 uS)
+; For reasonably accurate detection of a start bit, checking the input every 1/3 bit width (21 uS)
 ; is desired -- worst case should be detecting the start bit 2/3 after the down transition
-; this should be close enough to successfully detect the remaining 8 bits, allowing for 24 uS
+; this should be close enough to successfully detect the remaining 8 bits, allowing for 21 uS
 ; of timing slop...
 ;
 ; ...HOWEVER...
 ;
-; ...the interrupt takes up 24 cycles or more at its quickest and the program would spend all of
-; its time in the interrupt routine. So the input will actually be checked every 36 uS (36 cycles)
-; or one/half the time between bits. This still leaves only 12 cycles or so for the main thread
+; ...the interrupt takes up 15 cycles at its quickest and the program would spend all of its
+; time in the interrupt routine. So the input will actually be checked every 32 uS (32 cycles)
+; or one/half the time between bits. This still leaves only 17 cycles or so for the main thread
 ; to execute for every call to the interrupt, but the main thread is not time critical.
 ;
 ; When the interrupt detects a start bit, the main thread will not run again until an entire
@@ -161,6 +161,11 @@
 ; next bit, but that would require another mode flag check, more lost cycles, and a lot more
 ; complexity. The main thread will get 12 cycle blocks when between words and when the "Main" PIC
 ; is not sending data.
+;
+; NOTE: Because the main thread does not execute while the interrupt code is receiving a word,
+; it must have time between words to perform its worst case processing so it can retrieve each
+; new word before the interrupt overwrites it. Thus the "Main" PIC must have a significant
+; delay between words.
 ;
 ;--------------------------------------------------------------------------------------------------
 
@@ -221,13 +226,38 @@ LCD_DATA        EQU     0x06		; PORTB
 ; Constant Definitions
 ;
 
-TIMER0_RELOAD_START_BIT_SEARCH	EQU	.255-.36		; interrupt every 36 us (32 cycles)
-													; half of the 72 uS (72 cycles) between serial bits
+TIMER0_RELOAD_START_BIT_SEARCH	EQU	.255-.38		; interrupt every 32 us (32 cycles)
+													; (half of the 64 uS (64 cycles) between serial bits)
 													; see note "Serial Data from Main PIC" in this file
+													; wasted cycles in interrupt not accounted for -- use
+													; where this is not a factor
+													; 38 is actual value used to take into account cycles
+													; lost in interrupt and due to counter skips after load
+
+
+TIMER0_RELOAD_START_BIT_SEARCH_Q	EQU	.255-.16
+													; interrupt every 32 us (32 cycles)
+													; (half of the 64 uS (64 cycles) between serial bits)
+													; see note "Serial Data from Main PIC" in this file
+													; 16 is actual value used to take into account cycles
+													; lost in interrupt and due to counter skips after load
+
+BIT_TO_BIT_LOOP_DELAY			EQU	.18				; used in decfsz loops to delay between serial bits
+													; want 64 uS
+													; 19 takes into account cycles used by bit read loop
+
+BIT_TO_BIT_LOOP_DELAY_H			EQU	BIT_TO_BIT_LOOP_DELAY/.2
+													; used in decfsz loops to delay after start bit
+													; half of normal bit width to put timing into center
+													; of first data bit
+
+FINAL_BIT_LOOP_DELAY			EQU	.22				; used in decfsz loops to delay after the final bit
+													; so it won't be seen as the next start bit -- it
+													; is slightly longer than a full bit delay
 
 ; bits in flags variable
 
-ADDRESS_SET_BIT	EQU		7		; set in LCD control codes to specify an address change byte
+ADDRESS_SET_BIT	EQU		.7		; set in LCD control codes to specify an address change byte
 
 MAX_COLUMN      EQU     .19		; highest column number (20 columns)
 PAST_MAX_COLUMN EQU		.20		; one past the highest column number
@@ -289,25 +319,26 @@ BLINK_ON_FLAG			EQU		0x01
 							; bit 6:
 							; bit 7:
 
-	newControlByte			; new control bytes stored here by interrupt routine
-	newLCDData				; new data bytes stored here by interrupt routine
-
 	controlByte				; the first byte of each serial data byte pair is stored here
 	lcdData					; stores data byte to be written to the LCD
-	newSerialByte			; each serial data byte is stored here upon being received
-
-
-
 
 	smallDelayCnt			; used to count down for small delay
 	bigDelayCnt				; used to count down for big delay
-	bitCount				; used to count number of bits received
 	
 	scratch0				; scratch pad variable
 	scratch1				; scratch pad variable
 	scratch2				; scratch pad variable
 
+	; next variables ONLY written to by interrupt code
+
 	intScratch0				; scratch pad variable for exclusive use by interrupt code
+	bitCount				; used to count number of bits received
+	newSerialByte			; each serial data byte is stored here upon being received
+	newControlByte			; new control bytes stored here by interrupt routine
+	newLCDData				; new data bytes stored here by interrupt routine
+
+	; end of variables ONLY written to by interrupt code
+
 	
     eepromAddress		    ; use to specify address to read or write from EEprom
     eepromCount	        	; use to specify number of bytes to read or write from EEprom
@@ -560,9 +591,9 @@ BLINK_ON_FLAG			EQU		0x01
 	clrf	STATUS          ; set to known state
     clrf    PCLATH          ; set to bank 0 where the ISR is located
 
-	bcf 	INTCON,T0IF     ; Clear the Timer0 overflow interrupt flag
-	movlw	TIMER0_RELOAD_START_BIT_SEARCH
+	movlw	TIMER0_RELOAD_START_BIT_SEARCH_Q
 	movwf	TMR0
+	bcf 	INTCON,T0IF     ; clear the Timer0 overflow interrupt flag
 
 	; data bank 0 already selected by clearing STATUS above
 
@@ -577,6 +608,85 @@ BLINK_ON_FLAG			EQU		0x01
     ;goto 	handleInterrupt	; points to interrupt service routine
 
 ; end of Reset Vectors
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; setup
+;
+; Presets variables and configures hardware.
+;
+
+setup:
+
+	; make sure both bank selection bits are set to Bank 0
+
+	bcf	    STATUS,RP0	    ; back to Bank 0
+    bcf     STATUS,RP1	    ; back to Bank 0
+
+    clrf    INTCON          ; disable all interrupts
+
+	movlw	0x07			; turn off comparator, PortA pins set for I/O                              
+ 	movwf	CMCON           ; 7 -> Comparator Control Register to disable comparator inputs
+
+    movlw   0xff
+    movwf   PORTA           ; 0xff -> Port A
+
+ 	movlw	0x00			                                
+ 	movwf	PORTB			; set Port B outputs low
+
+ 	bsf 	STATUS,RP0		; select bank 1
+
+	movlw 	0x01                              
+ 	movwf 	TRISA			; 0x01 -> TRISA = PortA I/O 0000 0001 b (1=input, 0=output)
+    						;	RA0 - Input : receives serial input data
+							;	RA1 - Output: E strobe to initiate LCD R/W
+							;	RA2 - Output: Register Select for LCD
+							;	RA3 - Output: unused (pulled high for some reason)
+							;	RA4 - Output: unused (pulled high for some reason)
+							;	RA5 - Vpp for PIC programming, unused otherwise
+							;	RA6 - unused (unconnected)
+							;	RA7 - unused (unconnected)
+ 	movlw 	0x00
+ 	movwf	TRISB			; 0x00 -> TRISB = PortB I/O 0000 0000 b (1=input, 0=output)
+							;	port B outputs data to the LCD display
+							; 	RB6 is also used for programming the PIC
+							; 	RB7 is also used for programming the PIC
+
+	movlw	0x58			; set options 0101 1000 b
+	movwf	OPTION_REG		; bit 7 = 0: PORTB pull-ups are enabled by individual port latch values
+     						; bit 6 = 1: RBO/INT interrupt on rising edge
+							; bit 5 = 0: TOCS ~ Timer 0 run by internal instruction cycle clock (CLKOUT ~ Fosc/4)
+							; bit 4 = 1: TOSE ~ Timer 0 increment on high-to-low transition on RA4/T0CKI/CMP2 pin (not used here)
+							; bit 3 = 1: PSA ~ Prescaler assigned to WatchDog; Timer 0 will be 1:1 with Fosc/4
+                            ; bit 2 = 0 : Bits 2:0 control prescaler:
+                            ; bit 1 = 0 :    000 = 1:2 scaling for Timer0 (if assigned to Timer0)
+                            ; bit 0 = 0 :
+
+ 	bcf 	STATUS,RP0		; select bank 0                          
+	
+	movlw	TIMER0_RELOAD_START_BIT_SEARCH_Q
+	movwf	TMR0
+
+ 	bcf		PORTA,LCD_E     ; set LCD E strobe low (inactive)
+	bcf		PORTA,LCD_RS	; set LCD Register Select low (chooses instruction register)
+	bsf		PORTA,UNUSED1	; set high to match pullup (unused)
+	bcf		PORTA,UNUSED2   ; set high to match pullup (unused)
+
+; enable the interrupts
+
+
+	bsf	    INTCON,PEIE	    ; enable peripheral interrupts (Timer0 is a peripheral)
+    bsf     INTCON,T0IE     ; enabe TMR0 interrupts
+    bsf     INTCON,GIE      ; enable all interrupts
+
+	; make sure both bank selection bits are set to Bank 0
+
+	bcf	    STATUS,RP0	    ; back to Bank 0
+    bcf     STATUS,RP1	    ; back to Bank 0
+
+	return
+
+; end of setup
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -633,87 +743,11 @@ mainLoop:
 
 	bcf		STATUS,RP0			; select bank 0
 
-;debug mks	call	writeNextCharInBufferToLCD ;write one character in the buffer to the LCD
+	call	writeNextCharInBufferToLCD ;write one character in the buffer to the LCD
 
     goto    mainLoop
 
 ; end of Main Code
-;--------------------------------------------------------------------------------------------------
-
-;--------------------------------------------------------------------------------------------------
-; setup
-;
-; Presets variables and configures hardware.
-;
-
-setup:
-
-	; make sure both bank selection bits are set to Bank 0
-
-	bcf	    STATUS,RP0	    ; back to Bank 0
-    bcf     STATUS,RP1	    ; back to Bank 0
-
-    clrf    INTCON          ; disable all interrupts
-
-	movlw	0x07			; turn off comparator, PortA pins set for I/O                              
- 	movwf	CMCON           ; 7 -> Comparator Control Register to disable comparator inputs
-
-    movlw   0xff
-    movwf   PORTA           ; 0xff -> Port A
-
- 	movlw	0x00			                                
- 	movwf	PORTB			; set Port B outputs low
-
- 	bsf 	STATUS,RP0		; select bank 1
-
-	movlw 	0x01                              
- 	movwf 	TRISA			; 0x01 -> TRISA = PortA I/O 0000 0001 b (1=input, 0=output)
-    						;	RA0 - Input : receives serial input data
-							;	RA1 - Output: E strobe to initiate LCD R/W
-							;	RA2 - Output: Register Select for LCD
-							;	RA3 - Output: unused (pulled high for some reason)
-							;	RA4 - Output: unused (pulled high for some reason)
-							;	RA5 - Vpp for PIC programming, unused otherwise
-							;	RA6 - unused (unconnected)
-							;	RA7 - unused (unconnected)
- 	movlw 	0x00
- 	movwf	TRISB			; 0x00 -> TRISB = PortB I/O 0000 0000 b (1=input, 0=output)
-							;	port B outputs data to the LCD display
-							; 	RB6 is also used for programming the PIC
-							; 	RB7 is also used for programming the PIC
-
-	movlw	0x58			; set options 0101 1000 b
-	movwf	OPTION_REG		; bit 7 = 0: PORTB pull-ups are enabled by individual port latch values
-     						; bit 6 = 1: RBO/INT interrupt on rising edge
-							; bit 5 = 0: TOCS ~ Timer 0 run by internal instruction cycle clock (CLKOUT ~ Fosc/4)
-							; bit 4 = 1: TOSE ~ Timer 0 increment on high-to-low transition on RA4/T0CKI/CMP2 pin (not used here)
-							; bit 3 = 1: PSA ~ Prescaler assigned to WatchDog; Timer 0 will be 1:1 with Fosc/4
-                            ; bit 2 = 0 : Bits 2:0 control prescaler:
-                            ; bit 1 = 0 :    000 = 1:2 scaling for Timer0 (if assigned to Timer0)
-                            ; bit 0 = 0 :
-
- 	bcf 	STATUS,RP0		; select bank 0                          
-
- 	bcf		PORTA,LCD_E     ; set LCD E strobe low (inactive)
-	bcf		PORTA,LCD_RS	; set LCD Register Select low (chooses instruction register)
-	bsf		PORTA,UNUSED1	; set high to match pullup (unused)
-	bcf		PORTA,UNUSED2   ; set high to match pullup (unused)
-
-; enable the interrupts
-
-
-	bsf	    INTCON,PEIE	    ; enable peripheral interrupts (Timer0 is a peripheral)
-    bsf     INTCON,T0IE     ; enabe TMR0 interrupts
-    bsf     INTCON,GIE      ; enable all interrupts
-
-	; make sure both bank selection bits are set to Bank 0
-
-	bcf	    STATUS,RP0	    ; back to Bank 0
-    bcf     STATUS,RP1	    ; back to Bank 0
-
-	return
-
-; end of setup
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -744,7 +778,9 @@ handleDataFromMainPIC:
 	movlw	0xff					; signal that no new data in the new variables
 	movwf	newControlByte
 
-	goto	debug	;debug mks -- store the controlByte and lcdData in eeprom
+	; call to debug will cause communication to be corrupted with Main PIC when it comes time to
+	; write to the eeprom as that disables interrupts for a while
+	;call	debug	;debug mks -- store the controlByte and lcdData in eeprom
 
 	movf	controlByte,W			; if the control byte is 0, then the second byte is data for the LCD
  	sublw	0
@@ -807,7 +843,7 @@ notAddressChangeCmd:
 
 	; transmit all other control codes straight to the display
 
-;debug mks    call    writeLCDInstruction
+	call    writeLCDInstruction
 
 	return
 
@@ -864,7 +900,7 @@ incrementLCDOutBufferPointers:
 
 	incf	lcdOutColumn,F	; track column number
 	movf	lcdOutColumn,W	; check if highest column number reached
- 	sublw	MAX_COLUMN
+ 	sublw	PAST_MAX_COLUMN
  	btfss	STATUS,Z
     goto	noRollOver
 
@@ -1717,48 +1753,6 @@ waitWTE1:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; handleInterrupt
-;
-; NOT USED -- handleInterrupt is skipped in this program -- see note in this file:
-;	 "Note: handleInterrupt not used."
-;
-; All interrupts call this function.  The interrupt flags must be polled to determine which
-; interrupts actually need servicing.
-;
-; Note that after each interrupt type is handled, the interrupt handler returns without checking
-; for other types.  If another type has been set, then it will immediately force a new call
-; to the interrupt handler so that it will be handled.
-;
-; NOTE NOTE NOTE
-; It is important to use no (or very few) subroutine calls.  The stack is only 8 deep and
-; it is very bad for the interrupt routine to use it.
-;
-; Data bank 0 should be selected on entry.
-;
-
-handleInterrupt:
-
-	btfsc 	INTCON,T0IF     		; Timer0 overflow interrupt?
-	goto 	handleTimer0Interrupt	; YES, so process Timer0
-           
-; Not used at this time to make interrupt handler as small as possible.
-;	btfsc 	INTCON, RBIF      		; NO, Change on PORTB interrupt?
-;	goto 	portB_interrupt       	; YES, Do PortB Change thing
-
-INT_ERROR_LP1:		        		; NO, do error recovery
-	;GOTO INT_ERROR_LP1      		; This is the trap if you enter the ISR
-                               		; but there were no expected interrupts
-
-endISR:
-
-	POP_MACRO               		; MACRO that restores required registers
-
-	retfie                  		; Return and enable interrupts
-
-; end of handleInterrupt
-;--------------------------------------------------------------------------------------------------
-
-;--------------------------------------------------------------------------------------------------
 ; debug
 ;
 ; Stores several bytes (number specified by debugCounter) in eeprom for later viewing.
@@ -1772,8 +1766,6 @@ endISR:
 ;
                                  
 debug:
-
-	return
 	
     bcf     STATUS,IRP      ; use lower half of memory for indirect addressing of debug buffer
 
@@ -1826,11 +1818,55 @@ storeDebugDataInEEprom:
 
     call    writeToEEprom
 
+	return
+
 debugFreeze:
 
 	goto	debugFreeze
 
 ; end of debug
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; handleInterrupt
+;
+; NOT USED -- handleInterrupt is skipped in this program -- see note in this file:
+;	 "Note: handleInterrupt not used."
+;
+; All interrupts call this function.  The interrupt flags must be polled to determine which
+; interrupts actually need servicing.
+;
+; Note that after each interrupt type is handled, the interrupt handler returns without checking
+; for other types.  If another type has been set, then it will immediately force a new call
+; to the interrupt handler so that it will be handled.
+;
+; NOTE NOTE NOTE
+; It is important to use no (or very few) subroutine calls.  The stack is only 8 deep and
+; it is very bad for the interrupt routine to use it.
+;
+; Data bank 0 should be selected on entry.
+;
+
+handleInterrupt:
+
+	btfsc 	INTCON,T0IF     		; Timer0 overflow interrupt?
+	goto 	handleTimer0Interrupt	; YES, so process Timer0
+           
+; Not used at this time to make interrupt handler as small as possible.
+;	btfsc 	INTCON, RBIF      		; NO, Change on PORTB interrupt?
+;	goto 	portB_interrupt       	; YES, Do PortB Change thing
+
+INT_ERROR_LP1:		        		; NO, do error recovery
+	;GOTO INT_ERROR_LP1      		; This is the trap if you enter the ISR
+                               		; but there were no expected interrupts
+
+endISR:
+
+	POP_MACRO               		; MACRO that restores required registers
+
+	retfie                  		; Return and enable interrupts
+
+; end of handleInterrupt
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -1844,68 +1880,117 @@ debugFreeze:
 ; It is important to use no (or very few) subroutine calls.  The stack is only 8 deep and
 ; it is very bad for the interrupt routine to use it.
 ;
+; NOTE: Because the main thread does not execute while the interrupt code is receiving a word,
+; it must have time between words to perform its worst case processing so it can retrieve each
+; new word before the interrupt overwrites it. Thus the "Main" PIC must have a significant
+; delay between words.
+;
 
 handleTimer0Interrupt:
 
-	bsf		LCD_CTRL,UNUSED1
-	bcf		LCD_CTRL,UNUSED1
+; if start bit was caught at the very leading edge, need to delay a bit
+; to catch first data bit a little after its leading edge; if the
+; start bit was caught a bit late, this shouldn't be enough to push
+; the timing too late 
 
-    goto    endISR
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+
+; read the control byte
                                  
-receiveSerialByte:
-
-	bcf		STATUS,RP0			; select bank 0
-
 	movlw	0x8					; preset bit counter to 8 bits to make a byte
 	movwf	bitCount
+
+readControlByteLoop:
+
+	movlw	BIT_TO_BIT_LOOP_DELAY	; delay between bits
+	movwf	intScratch0
+bitLoop1: 	
+	decfsz	intScratch0,F
+    goto    bitLoop1
+
+	bsf		LCD_CTRL,UNUSED1	;debug mks -- remove this
+	bcf		LCD_CTRL,UNUSED1	;debug mks -- remove this
 	
-L10b:
- 	btfsc	PORTA,SERIAL_IN		; loop until serial in data line gloes low to signal new bit
-    goto    L10b				;  this first low is the start bit and will be tossed
-
-	movlw	0xe2				; set Timer 0 to delay a bit to center sampling near the center of the bit
-	movwf	TMR0
-	bcf		INTCON,T0IF			; clear Timer 0 overflow flag
-
-L11b:
-	btfss	INTCON,T0IF			; loop until Timer 0 overflow flag is set
-	goto    L11b
- 
-;debug mks	btfsc	PORTA,SERIAL_IN		; check serial input again -- if it is not still low then                         
-;debug mks    goto    L10b				;  assume it was noise and start over looking for start bit
-
-L13b:
-	movlw	0xce				; set Timer 0 to delay between bits
-	movwf	TMR0
-	bcf		INTCON,T0IF			; clear Timer 0 overflow flag
-
-L12b:
-	btfss	INTCON,T0IF			; loop until Timer 0 overflow flag is set
-    goto    L12b
-
-	bcf		INTCON,T0IF			; clear Timer 0 overflow flag
-	
-	movf	PORTA,W				; get Port A, bit 0 of which is the serial in data line
-	movwf	scratch0			; save it so rrf can be performed
-	rrf		scratch0,F			; rotate bit 0 (serial data in) into the Carry bit                            
+	movf	PORTA,W				; get Port A to get bit 0 (the serial data input)
+	movwf	intScratch0			; save it so rrf can be performed
+	rrf		intScratch0,F		; rotate bit 0 into the Carry bit                            
 	rlf		newSerialByte,F		; rotate the Carry bit into the new data byte being constructed
       
  	decfsz	bitCount,F			; loop for 8 bits                         
-    goto    L13b
+    goto    readControlByteLoop
 
+	movf	newSerialByte,W		; store in newControlByte where main thread will detect that it has
+	movwf	newControlByte		; been changed from 0xff
+								; (since the control byte and the data byte are read in the
+								;  interrupt before returning, no worry about main thread seeing
+								;  control byte change before data byte read)
 
-	; wait a while to finish out the last bit so it doesn't get detected as a start bit
-	; when this function is called again immediately
+; delay to get past the final bit
 
-	movlw	0xa0				; set Timer 0 to delay for the rest of the last bit
+	movlw	FINAL_BIT_LOOP_DELAY	; delay a bit extra to get past last bit so it isn't detected
+	movwf	intScratch0				; as the next start bit
+finalBitLoop1: 	
+	decfsz	intScratch0,F
+    goto    finalBitLoop1
+
+waitForStartBitLoop1:
+ 	btfsc	PORTA,SERIAL_IN			; loop until next start bit detected
+    goto    waitForStartBitLoop1
+
+; wait 1/2 bit width after start bit to put timing into center of first data bit
+
+	movlw	BIT_TO_BIT_LOOP_DELAY_H	; 1/2 delay between bits
+	movwf	intScratch0
+bitLoop2: 	
+	decfsz	intScratch0,F
+    goto    bitLoop2
+
+; read the data byte
+
+	movlw	0x8					; preset bit counter to 8 bits to make a byte
+	movwf	bitCount
+
+readDataByteLoop:
+
+	movlw	BIT_TO_BIT_LOOP_DELAY	; delay between bits
+	movwf	intScratch0
+bitLoop3: 	
+	decfsz	intScratch0,F
+    goto    bitLoop3
+
+	; adjust BIT_TO_BIT_LOOP_DELAY up one when these removed
+	bsf		LCD_CTRL,UNUSED1	;debug mks -- remove this	
+	bcf		LCD_CTRL,UNUSED1	;debug mks -- remove this
+	
+	movf	PORTA,W				; get Port A to get bit 0 (the serial data input)
+	movwf	intScratch0			; save it so rrf can be performed
+	rrf		intScratch0,F		; rotate bit 0 into the Carry bit                            
+	rlf		newSerialByte,F		; rotate the Carry bit into the new data byte being constructed
+      
+ 	decfsz	bitCount,F			; loop for 8 bits                         
+    goto    readDataByteLoop
+
+	movf	newSerialByte,W		; store in newLCDData where main thread will use it after
+	movwf	newLCDData			; detecting that newControlByte has been set
+
+; no need to delay for final bit -- won't be looked at until next interrupt
+
+; reset the timer to a full count to avoid the time wasted in the interrupt
+
+	movlw	TIMER0_RELOAD_START_BIT_SEARCH
 	movwf	TMR0
-	bcf		INTCON,T0IF			; clear Timer 0 overflow flag
+	bcf 	INTCON,T0IF     	; clear the Timer0 overflow interrupt flag
 
-L15b:
-	btfss	INTCON,T0IF			; loop until Timer 0 overflow flag is set
-    goto    L15b
+	POP_MACRO               	; MACRO that restores required registers
 
-	return                                 
+	retfie                  	; Return and enable interrupts
 
 ; end of handleTimer0Interrupt
 ;--------------------------------------------------------------------------------------------------
