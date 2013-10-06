@@ -343,8 +343,12 @@ BLINK_ON_FLAG			EQU		0x01
 	controlByte				; the first byte of each serial data byte pair is stored here
 	lcdData					; stores data byte to be written to the LCD
 	
-	currentCursorLocation	; the current cursor location on the display; this is the
-							; code which is sent to the display to set that location
+	currentCursorLocation		; the current cursor location on the display; this is the
+								; code which is sent to the display to set that location
+
+	currentCursorBufferPosition ; the current buffer position of the last cursor location
+								; specified by the "Main" PIC
+
 	currentLCDOnOffState	; on/off state of the LCD along with cursor on/off and
 							; blink on/off; this is code for the display to set those
 
@@ -907,18 +911,6 @@ notDisplayCursorBlinkCmd:
 
 writeNextCharInBufferToLCD:
 
-	bcf		STATUS,RP0					; select bank 0
-
-	btfss	flags,BLINK_ON_OFF_FLAG		; check if blinking is on
-	goto	blinkIsOff
-
-	bcf		flags,BLINK_ON_OFF_FLAG		;turn blinking off so it won't show as glitches
-	movlw	DISP_ON_CURSOR_OFF_BLINK_OFF_CMD
-	movwf	lcdData         	; store for use by writeLCDData function
-    call    writeLCDInstruction
-
-blinkIsOff:
-
 	bsf     STATUS,RP0      ; select data bank 1 to access LCD buffer variables
     bsf     STATUS,IRP      ; use upper half of memory for indirect addressing of LCD buffer
 
@@ -929,6 +921,27 @@ blinkIsOff:
 
 	bcf		STATUS,RP0		; select bank 0
 	movwf	lcdData         ; store for use by writeLCDData function
+
+	; check if cursor is blinking and is in the "off" state
+
+	btfsc	currentLCDOnOffState,BLINK_ON_OFF_CMD_FLAG
+	btfsc	flags,CHAR_AT_CURSOR_STATE
+	goto	noHideCharacter
+
+	; character should be off
+
+	bsf		STATUS,RP0		; select bank 1
+	movf	lcdBufOutPtr,W
+	bcf		STATUS,RP0		; select bank 0
+	subwf	currentCursorBufferPosition,W
+	btfss	STATUS,Z
+	goto	noHideCharacter
+
+	movlw	' '
+	movwf	lcdData         ; store for use by writeLCDData function	
+
+noHideCharacter:
+	
     call    writeLCDData
 
 	bsf     STATUS,RP0      ; back to bank 1 
@@ -1021,9 +1034,9 @@ handleEndOfRefreshTasks:
 
 	; at the current time, character is off so replace it with a space
 
-	movlw	' '
-	movwf	lcdData         	; store for use by writeLCDData function
-    call    writeLCDData
+	;debug mks movlw	' '
+	;debug mks movwf	lcdData         	; store for use by writeLCDData function
+    ;debug mks call    writeLCDData
 
 charAtCursorNotOff:
 
@@ -1212,6 +1225,10 @@ setLCDBufferWriteAddress:
 
 	call	getLCDLineContainingAddress	; find which line contains the specified address
 
+	movf	lcdBufInPtr,W
+ 	bcf 	STATUS,RP0					; select bank 0
+	movwf	currentCursorBufferPosition	; store as the cursor location for later use in making
+										; the character at that location blink
 	return
 
 ; end of setLCDBufferWriteAddress
