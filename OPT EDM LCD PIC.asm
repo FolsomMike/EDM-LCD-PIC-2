@@ -242,7 +242,7 @@ TIMER0_RELOAD_START_BIT_SEARCH_Q	EQU	.255-.16
 													; 16 is actual value used to take into account cycles
 													; lost in interrupt and due to counter skips after load
 
-BIT_TO_BIT_LOOP_DELAY			EQU	.18				; used in decfsz loops to delay between serial bits
+BIT_TO_BIT_LOOP_DELAY			EQU	.19				; used in decfsz loops to delay between serial bits
 													; want 64 uS
 													; 19 takes into account cycles used by bit read loop
 
@@ -1914,9 +1914,6 @@ readControlByteLoop:
 bitLoop1: 	
 	decfsz	intScratch0,F
     goto    bitLoop1
-
-	bsf		LCD_CTRL,UNUSED1	;debug mks -- remove this
-	bcf		LCD_CTRL,UNUSED1	;debug mks -- remove this
 	
 	movf	PORTA,W				; get Port A to get bit 0 (the serial data input)
 	movwf	intScratch0			; save it so rrf can be performed
@@ -1964,10 +1961,6 @@ readDataByteLoop:
 bitLoop3: 	
 	decfsz	intScratch0,F
     goto    bitLoop3
-
-	; adjust BIT_TO_BIT_LOOP_DELAY up one when these removed
-	bsf		LCD_CTRL,UNUSED1	;debug mks -- remove this	
-	bcf		LCD_CTRL,UNUSED1	;debug mks -- remove this
 	
 	movf	PORTA,W				; get Port A to get bit 0 (the serial data input)
 	movwf	intScratch0			; save it so rrf can be performed
