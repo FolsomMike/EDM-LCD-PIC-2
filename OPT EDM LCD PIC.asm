@@ -31,6 +31,7 @@
 ; 		received from the master except address change codes are transmitted straight to the display.
 ;		The constant refreshing of the display serves to correct errors caused by noise from the
 ;		cutting current. The errors manifested as changed or missing characters in the display.
+; 2.1  No changes -- used to verify program downloaded into PIC.
 ;
 ;--------------------------------------------------------------------------------------------------
 ;
@@ -1570,7 +1571,7 @@ displayGreeting:
     call    writeToLCDBuffer
  	bcf 	STATUS,RP0		; select bank 0
 
-	movlw	'0'       
+	movlw	'1'
 	movwf	lcdData                             
     call    writeToLCDBuffer
  	bcf 	STATUS,RP0		; select bank 0
