@@ -1,0 +1,8 @@
+02_EDM-LCD-PIC-2
+
+This file is for use on Model II setups which use the PIC16F648 on the Main Control board to drive the LCD.
+
+It uses bit-banging to read serial data from the Main PIC.
+
+It is an upgrade from the 01_EDM-LCD-PIC-1 Model in that it stores all data to be displayed in a local buffer
+and then constantly refreshes the LCD from that buffer to provide for error correction.
